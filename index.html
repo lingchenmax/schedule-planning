@@ -1208,27 +1208,27 @@ function exportExcel(){
     const ws=XLSX.utils.aoa_to_sheet(data);
     const wb=XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb,ws,'日程');
-    const blob=XLSX.write(wb,{bookType:'xlsx',type:'blob'});
-    const url=URL.createObjectURL(blob);
     
+    // ===== 关键修复：生成二进制 array，然后手动转为 Blob =====
+    const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([wbout], { type: 'application/octet-stream' });
+    
+    const url=URL.createObjectURL(blob);
     const a=document.createElement('a');
-    a.style.display = 'none'; // 隐藏标签
+    a.style.display = 'none';
     a.href=url;
     const today=new Date();
     a.download=`${state.shipNo}-中日程-${today.getFullYear()}${pad2(today.getMonth()+1)}${pad2(today.getDate())}.xlsx`;
     
-    // 关键修复：必须挂载到 body 上再点击，否则部分浏览器（如 Edge/Safari）不认
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     
-    // 延时释放内存，防止下载被取消
     setTimeout(()=>{ URL.revokeObjectURL(url); }, 5000);
     setStatus('已导出 Excel');
-    console.log("导出成功触发");
   } catch (error) {
     console.error("导出失败", error);
-    alert("导出失败，请按F12检查控制台错误：" + error.message);
+    alert("导出失败：" + error.message);
   }
 }
 
