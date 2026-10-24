@@ -12,6 +12,7 @@ body{font-family:-apple-system,"Microsoft YaHei",sans-serif;font-size:12px;backg
 #toolbar button,#toolbar select,#toolbar input[type=date],#toolbar input[type=text]{font-size:12px;padding:4px 8px;border:1px solid #ccc;border-radius:3px;background:#fff;cursor:pointer}
 #toolbar button.primary{background:#4A90E2;color:#fff;border-color:#4A90E2}
 #toolbar button.safe{background:#52c41a;color:#fff;border-color:#52c41a}
+#toolbar button.warn{background:#faad14;color:#fff;border-color:#faad14}
 #toolbar button.readonly-on{background:#ff4d4f;color:#fff;border-color:#ff4d4f;}
 #main{display:flex;height:calc(100vh - 56px);overflow:hidden}
 #left-panel{width:280px;flex-shrink:0;background:#fff;border-right:2px solid #999;display:flex;flex-direction:column;overflow:hidden}
@@ -40,6 +41,14 @@ body{font-family:-apple-system,"Microsoft YaHei",sans-serif;font-size:12px;backg
 #detail-modal table{width:100%;border-collapse:collapse}
 #detail-modal td{padding:5px 8px;border-bottom:1px solid #f0f0f0}
 #detail-modal td:first-child{color:#666;width:100px}
+
+#auth-modal{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;border-radius:8px;padding:24px;box-shadow:0 10px 40px rgba(0,0,0,0.2);z-index:10000;display:none;width:320px}
+#auth-modal h3{margin-bottom:16px;font-size:18px;text-align:center;color:#333}
+#auth-modal input{width:100%;padding:8px;margin-bottom:12px;border:1px solid #ccc;border-radius:4px;font-size:14px}
+#auth-modal button{width:100%;padding:10px;margin-bottom:8px;border:none;border-radius:4px;font-size:14px;cursor:pointer}
+#auth-modal .btn-login{background:#4A90E2;color:#fff;}
+#auth-modal .btn-register{background:#f0f0f0;color:#333;}
+#auth-modal .btn-close{background:transparent;color:#999;}
 #status{color:#888;font-size:11px;margin-left:auto}
 </style>
 </head>
@@ -51,14 +60,14 @@ body{font-family:-apple-system,"Microsoft YaHei",sans-serif;font-size:12px;backg
   <label>到 <input type="date" id="date-end" /></label>
   <label>缩放 <input type="range" id="zoom" min="15" max="60" value="30" style="vertical-align:middle" /></label>
   
-  <button id="btn-readonly">权限: 可编辑</button>
-  <button id="btn-undo">撤销</button>
-  <button id="btn-redo">重做</button>
-  
   <button id="btn-cloud-config">设置云同步</button>
   <button id="btn-save-cloud" class="safe" style="display:none;">存云端</button>
   <button id="btn-load-cloud" style="display:none;">拉云端</button>
   
+  <button id="btn-auth" class="warn">登录/注册</button>
+  
+  <button id="btn-undo">撤销</button>
+  <button id="btn-redo">重做</button>
   <button id="btn-export">导出 Excel</button>
   <span id="status">请上传"日程"Excel 文件</span>
 </div>
@@ -79,6 +88,15 @@ body{font-family:-apple-system,"Microsoft YaHei",sans-serif;font-size:12px;backg
 <div id="overlay"></div>
 <div id="detail-modal"></div>
 
+<div id="auth-modal">
+    <h3>账号登录 / 注册</h3>
+    <input type="email" id="auth-email" placeholder="请输入邮箱" />
+    <input type="password" id="auth-password" placeholder="请输入密码 (至少6位)" />
+    <button class="btn-login" id="btn-do-login">登 录</button>
+    <button class="btn-register" id="btn-do-register">注 册</button>
+    <button class="btn-close" id="btn-auth-close">关闭</button>
+</div>
+
 <script>
 'use strict';
 
@@ -88,23 +106,25 @@ let SUPABASE_KEY = 'sb_publishable_bLoMgVcw3cv7hO8bJyVplA_O_ESlK6j
 // ==========================================
 
 const ROW_H=80, BAR_H=8, BAR_GAP=4, PAD_TOP=6;
+// 按用户要求硬编码最新颜色
 const PHASES=[
-  {key:'切割',start:'cuttingStart',end:'cuttingEnd',color:'#4A90E2'},
-  {key:'部件',start:'partStart',end:'partEnd',color:'#7ED321'},
-  {key:'在胎',start:'layStart',end:'layEnd',color:'#F5A623'},
-  {key:'结构',start:'layEnd',end:'structEnd',color:'#D0021B',tooltipStart:'layStart',isStructure:true},
-  {key:'预装',start:'preInstallStart',end:'preInstallEnd',color:'#9013FE'},
-  {key:'预组',start:'preGroupStart',end:'preGroupEnd',color:'#50E3C2',groupBy:'preNo'},
-  {key:'涂装',start:'coatStart',end:'coatEnd',color:'#B8E986'},
-  {key:'总组',start:'totalStart',end:'totalEnd',color:'#F8E71C',groupBy:'totalNo'},
-  {key:'船台/坞',start:'gatherStart',end:'launch',color:'#BD10E0',shipLevel:true},
+  {key:'切割',start:'cuttingStart',end:'cuttingEnd',color:'#FFF2CA'},
+  {key:'部件',start:'partStart',end:'partEnd',color:'#FFC000'},
+  {key:'在胎',start:'layStart',end:'layEnd',color:'#00B0F0'},
+  {key:'结构',start:'layEnd',end:'structEnd',color:'#FF66CC',tooltipStart:'layStart',isStructure:true},
+  {key:'预装',start:'preInstallStart',end:'preInstallEnd',color:'#7030A0'},
+  {key:'预组',start:'preGroupStart',end:'preGroupEnd',color:'#30C0B4',groupBy:'preNo'},
+  {key:'涂装',start:'coatStart',end:'coatEnd',color:'#FF0000'},
+  {key:'总组',start:'totalStart',end:'totalEnd',color:'#FABF8F',groupBy:'totalNo'},
+  {key:'船台/坞',start:'gatherStart',end:'launch',color:'#75BD42',shipLevel:true},
 ];
 const state={rows:[],ships:[],shipNo:null,shipRows:[],groups:{pre:new Map(),total:new Map()},shipRange:null,dateStart:null,dateEnd:null,dayWidth:30,barColors:{},bars:[],selected:new Set(),drag:null};
 
 let sbClient = null;
 let undoStack = [];
 let redoStack = [];
-let isReadOnly = false;
+let currentUser = null;
+let isApproved = false; // 是否在白名单
 
 const pad2=n=>String(n).padStart(2,'0');
 const fmtDate=d=>d?`${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`:'';
@@ -118,7 +138,7 @@ function parseDateVal(v){
   if(typeof v==='number'){const d=new Date(Date.UTC(1899,11,30)+v*86400000);return new Date(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate());}
   if(typeof v==='string'){
     let s = v.trim();
-    if (s.includes('T')) s = s.split('T')[0]; // 修复：兼容带T的ISO时间格式
+    if (s.includes('T')) s = s.split('T')[0]; 
     else s = s.split(' ')[0];
     const p=s.split(/[-\/]/);
     if(p.length===3){const[y,m,d]=p.map(Number);if(y&&m&&d)return new Date(y,m-1,d);}
@@ -128,48 +148,131 @@ function parseDateVal(v){
 }
 
 // ==== 初始化 ====
-window.onload = () => {
+window.onload = async () => {
     SUPABASE_URL = localStorage.getItem('sb_url') || SUPABASE_URL;
     SUPABASE_KEY = localStorage.getItem('sb_key') || SUPABASE_KEY;
-    initSupabase();
     
-    // 检查本地只读状态
-    if(localStorage.getItem('sb_readonly') === 'true') {
-        toggleReadOnly(true);
-    }
-    
+    await initSupabase();
     if(loadFromLocal()){
         pushHistory(); 
         render();
     }
 };
 
-function toggleReadOnly(forceState) {
-    isReadOnly = forceState !== undefined ? forceState : !isReadOnly;
-    const btn = document.getElementById('btn-readonly');
-    if(isReadOnly){
-        btn.textContent = '权限: 只读';
-        btn.classList.add('readonly-on');
-        localStorage.setItem('sb_readonly', 'true');
-    } else {
-        btn.textContent = '权限: 可编辑';
-        btn.classList.remove('readonly-on');
-        localStorage.setItem('sb_readonly', 'false');
-    }
-}
-
-function initSupabase(){
+async function initSupabase(){
     if(SUPABASE_URL && SUPABASE_KEY && window.supabase){
         sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         document.getElementById('btn-save-cloud').style.display = 'inline-block';
         document.getElementById('btn-load-cloud').style.display = 'inline-block';
-        setStatus('云同步已就绪');
+        
+        const { data: { session } } = await sbClient.auth.getSession();
+        if (session?.user) {
+            await checkUserApproval(session.user);
+        } else {
+            updateAuthUI(null);
+        }
     } else {
         sbClient = null;
         document.getElementById('btn-save-cloud').style.display = 'none';
         document.getElementById('btn-load-cloud').style.display = 'none';
     }
 }
+
+async function checkUserApproval(user) {
+    currentUser = user;
+    isApproved = false;
+    
+    try {
+        // 去白名单表查询这个邮箱
+        const { data, error } = await sbClient
+            .from('approved_users')
+            .select('email')
+            .eq('email', user.email);
+            
+        if (!error && data && data.length > 0) {
+            isApproved = true;
+        }
+    } catch(e) {
+        console.error('查白名单失败', e);
+    }
+    
+    updateAuthUI(user);
+}
+
+function updateAuthUI(user) {
+    const btn = document.getElementById('btn-auth');
+    if (user) {
+        if (isApproved) {
+            btn.textContent = `已登录: ${user.email.split('@')[0]} (可编辑)`;
+            btn.className = 'safe';
+            setStatus('已登录，且在白名单中，拥有编辑权限');
+        } else {
+            btn.textContent = `已登录: ${user.email.split('@')[0]} (无权限)`;
+            btn.className = 'warn';
+            setStatus('已登录，但不在白名单中，当前为只读');
+        }
+        btn.title = "点击退出登录";
+    } else {
+        btn.textContent = '登录/注册';
+        btn.className = 'warn';
+        btn.title = "点击登录";
+        setStatus('未登录，当前为只读模式');
+    }
+    // 重绘一下，更新鼠标样式等
+    renderChartOnly();
+}
+
+// ==== 登录交互 ====
+document.getElementById('btn-auth').addEventListener('click', async () => {
+    if (currentUser) {
+        if(confirm("确定要退出登录吗？")) {
+            await sbClient.auth.signOut();
+            currentUser = null;
+            isApproved = false;
+            updateAuthUI(null);
+        }
+    } else {
+        document.getElementById('auth-modal').style.display = 'block';
+        document.getElementById('overlay').style.display = 'block';
+    }
+});
+
+document.getElementById('btn-auth-close').addEventListener('click', () => {
+    document.getElementById('auth-modal').style.display = 'none';
+    document.getElementById('overlay').style.display = 'none';
+});
+
+document.getElementById('btn-do-login').addEventListener('click', async () => {
+    if(!sbClient) return alert('请先配置云同步');
+    const email = document.getElementById('auth-email').value;
+    const password = document.getElementById('auth-password').value;
+    if(!email || !password) return alert('请输入邮箱和密码');
+    
+    const { data, error } = await sbClient.auth.signInWithPassword({ email, password });
+    if (error) return alert('登录失败: ' + error.message);
+    
+    document.getElementById('auth-modal').style.display = 'none';
+    document.getElementById('overlay').style.display = 'none';
+    await checkUserApproval(data.user);
+});
+
+document.getElementById('btn-do-register').addEventListener('click', async () => {
+    if(!sbClient) return alert('请先配置云同步');
+    const email = document.getElementById('auth-email').value;
+    const password = document.getElementById('auth-password').value;
+    if(!email || !password) return alert('请输入邮箱和密码');
+    
+    const { data, error } = await sbClient.auth.signUp({ email, password });
+    if (error) return alert('注册失败: ' + error.message);
+    
+    if(data.user && data.session) {
+        document.getElementById('auth-modal').style.display = 'none';
+        document.getElementById('overlay').style.display = 'none';
+        await checkUserApproval(data.user);
+    } else {
+        alert('注册成功，请前往邮箱验证后再登录。');
+    }
+});
 
 // ==== 撤销/重做 ====
 function pushHistory(){
@@ -203,18 +306,14 @@ function restoreSnapshot(str){
     renderChartOnly();
 }
 
-// ==== 数据处理（合并上传逻辑） ====
+// ==== 数据处理 ====
 function importExcelData(newRows){
-    // 获取新上传数据中所有的船号
     const newShips = new Set(newRows.map(r => r.shipNo));
-    // 过滤出本地已经存在，但这次没有上传的船只数据（保留它们）
     const keptRows = state.rows.filter(r => !newShips.has(r.shipNo));
-    
-    // 合并数据：新上传的覆盖旧的同名船只，保留没上传的旧船只
     state.rows = [...keptRows, ...newRows];
     
     state.ships=[...new Set(state.rows.map(r=>r.shipNo))].sort();
-    state.shipNo = newRows[0].shipNo; // 切换到新导入的船号
+    state.shipNo = newRows[0].shipNo; 
 
     const allD=[];
     state.rows.forEach(r=>PHASES.forEach(p=>{if(r[p.start]instanceof Date)allD.push(r[p.start]);if(r[p.end]instanceof Date)allD.push(r[p.end]);}));
@@ -266,25 +365,7 @@ async function importExcel(file){
     }
     if(!rows.length){alert('未读到数据行');return;}
 
-    const colorSheet=wb.Sheets['条形颜色'];
-    if(colorSheet){
-      const cArr=XLSX.utils.sheet_to_json(colorSheet,{header:1,defval:null});
-      let opRowIdx=-1;
-      for(let i=0;i<cArr.length;i++){
-        if(cArr[i] && cArr[i][1]==='工序'){opRowIdx=i;break;}
-      }
-      if(opRowIdx!==-1 && cArr[opRowIdx+1] && cArr[opRowIdx+1][1]==='颜色'){
-        const ops=cArr[opRowIdx];
-        const cols=cArr[opRowIdx+1];
-        for(let c=2;c<ops.length;c++){
-          if(ops[c] && cols[c]){
-            let colStr=String(cols[c]).trim();
-            if(!colStr.startsWith('#')) colStr='#'+colStr;
-            state.barColors[ops[c]]=colStr;
-          }
-        }
-      }
-    }
+    // 由于颜色已经硬编码，这里不再读取 Excel 里的颜色表
     importExcelData(rows);
     setStatus(`已导入 ${rows.length} 条分段数据`);
   }catch(err){console.error(err);alert('导入失败: '+err.message);}
@@ -297,6 +378,7 @@ function updateShipSelect(){
 }
 function setStatus(m){document.getElementById('status').textContent=m;}
 
+// ==== 核心渲染逻辑 ====
 function processData(){
   if(!state.shipNo){state.shipRows=[];state.bars=[];return;}
   const rows=state.rows.filter(r=>r.shipNo===state.shipNo);
@@ -502,7 +584,7 @@ function renderChart(){
     const x2=(daysBetween(state.dateStart,bar.end)+1)*state.dayWidth;
     const y=bar.rowIdx*ROW_H+PAD_TOP+bar.track*(BAR_H+BAR_GAP);
     const w=Math.max(x2-x1,2);
-    const color=state.barColors[bar.phase.key]||bar.phase.color;
+    const color=bar.phase.color; // 直接使用硬编码颜色
     
     const rect=document.createElementNS(NS,'rect');
     rect.setAttribute('x',x1);rect.setAttribute('y',y);
@@ -597,17 +679,14 @@ function drawShortArrow(frag,x,y,targetRow,ph,start,end,cycle, targetGroupKey=nu
   g.appendChild(path); frag.appendChild(g);
 }
 
-// ==== 框选与拖拽 ====
+// ==== 框选与拖拽（加入未登录拦截） ====
 let isBoxSelecting = false;
 let startX=0, startY=0;
 const boxEl = document.getElementById('selection-box');
 const rightPanel = document.getElementById('right-panel');
 
 rightPanel.addEventListener('mousedown', e => {
-    if (isReadOnly) {
-        // 如果只读，不触发拖拽和框选
-        return;
-    }
+    if (isReadOnlyMode()) return; 
 
     const el = e.target.closest('.bar, .arrow-mark');
     if (el) {
@@ -648,6 +727,10 @@ rightPanel.addEventListener('mousedown', e => {
     }
 });
 
+function isReadOnlyMode() {
+    return !isApproved; // 只有通过白名单校验才能编辑
+}
+
 function initDrag(el, bar, e) {
     let mode = 'move';
     if (el.classList.contains('bar') && e.shiftKey === false) {
@@ -681,7 +764,7 @@ function initDrag(el, bar, e) {
 }
 
 rightPanel.addEventListener('mousemove', e => {
-    if (isReadOnly) return;
+    if (isReadOnlyMode()) return;
 
     if (isBoxSelecting) {
         const rect = rightPanel.getBoundingClientRect();
@@ -725,7 +808,7 @@ rightPanel.addEventListener('mousemove', e => {
 });
 
 rightPanel.addEventListener('mouseup', e => {
-    if (isReadOnly) return;
+    if (isReadOnlyMode()) return;
 
     if (isBoxSelecting) {
         isBoxSelecting = false;
@@ -790,7 +873,7 @@ rightPanel.addEventListener('mouseup', e => {
 });
 
 document.addEventListener('keydown', e => {
-    if (isReadOnly) return;
+    if (isReadOnlyMode()) return;
 
     if (e.ctrlKey || e.metaKey) {
         if (e.key === 'z' || e.key === 'Z') {
@@ -819,7 +902,7 @@ document.addEventListener('keydown', e => {
 });
 
 function applyDrag(bar,mode,days, isBatch){
-  if (isReadOnly) return;
+  if (isReadOnlyMode()) return;
   const r=bar.row, ph=bar.phase;
   
   if(bar.isArrow){
@@ -908,6 +991,7 @@ document.getElementById('btn-cloud-config').addEventListener('click', ()=>{
 
 document.getElementById('btn-save-cloud').addEventListener('click', async ()=>{
     if(!sbClient) { alert('请先配置云同步'); return; }
+    if(!isApproved) { alert('您当前没有编辑权限！\n1. 请先登录。\n2. 或者联系管理员将您的邮箱加入白名单。'); return; }
     if(!state.rows.length) { alert('本地没有数据'); return; }
     setStatus('正在保存到云端...');
     try {
@@ -1002,6 +1086,7 @@ document.addEventListener('click',e=>{
 document.getElementById('overlay').addEventListener('click',()=>{
   document.getElementById('detail-modal').style.display='none';
   document.getElementById('overlay').style.display='none';
+  document.getElementById('auth-modal').style.display='none';
 });
 
 document.getElementById('right-panel').addEventListener('scroll',function(){
@@ -1081,7 +1166,6 @@ document.getElementById('date-start').addEventListener('change',e=>{
 document.getElementById('date-end').addEventListener('change',e=>{
   state.dateEnd=parseDateVal(e.target.value);render();
 });
-document.getElementById('btn-readonly').addEventListener('click', ()=>toggleReadOnly());
 document.getElementById('btn-undo').addEventListener('click', undo);
 document.getElementById('btn-redo').addEventListener('click', redo);
 document.getElementById('btn-export').addEventListener('click',exportExcel);
