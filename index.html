@@ -2,14 +2,14 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>中日程看板 - 完整版</title>
+<title>中日程看板 - 计划调整</title>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,"Microsoft YaHei",sans-serif;font-size:12px;background:#f5f5f5;user-select:none;}
-#toolbar{display:flex;gap:8px;padding:8px 12px;background:#fff;border-bottom:1px solid #ddd;align-items:center;flex-wrap:wrap;min-height:56px}
-#toolbar button,#toolbar select,#toolbar input[type=date],#toolbar input[type=text]{font-size:12px;padding:4px 8px;border:1px solid #ccc;border-radius:3px;background:#fff;cursor:pointer}
+#toolbar{display:flex;gap:8px;padding:8px 12px;background:#fff;border-bottom:1px solid #ddd;align-items:center;flex-wrap:wrap;min-height:56px;position:relative;z-index:100;}
+#toolbar button,#toolbar select,#toolbar input[type=date]{font-size:12px;padding:4px 8px;border:1px solid #ccc;border-radius:3px;background:#fff;cursor:pointer}
 #toolbar button.primary{background:#4A90E2;color:#fff;border-color:#4A90E2}
 #toolbar button.safe{background:#52c41a;color:#fff;border-color:#52c41a}
 #toolbar button.warn{background:#faad14;color:#fff;border-color:#faad14}
@@ -35,20 +35,17 @@ body{font-family:-apple-system,"Microsoft YaHei",sans-serif;font-size:12px;backg
 .dragging { opacity: 0.5 !important; cursor: grabbing !important; }
 #selection-box{position:absolute;border:1px solid #4A90E2;background:rgba(74,144,226,0.1);pointer-events:none;display:none;z-index:999;}
 #tooltip{position:fixed;background:rgba(0,0,0,0.85);color:#fff;padding:8px 12px;border-radius:4px;font-size:12px;line-height:1.6;pointer-events:none;z-index:9999;display:none;max-width:320px}
-#overlay{position:fixed;inset:0;background:rgba(0,0,0,0.3);z-index:9998;display:none}
-#detail-modal{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;border-radius:8px;padding:20px;box-shadow:0 10px 40px rgba(0,0,0,0.2);z-index:9999;display:none;min-width:380px}
-#detail-modal h3{margin-bottom:12px;font-size:15px}
-#detail-modal table{width:100%;border-collapse:collapse}
-#detail-modal td{padding:5px 8px;border-bottom:1px solid #f0f0f0}
-#detail-modal td:first-child{color:#666;width:100px}
 
-#auth-modal{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;border-radius:8px;padding:24px;box-shadow:0 10px 40px rgba(0,0,0,0.2);z-index:10000;display:none;width:320px}
-#auth-modal h3{margin-bottom:16px;font-size:18px;text-align:center;color:#333}
-#auth-modal input{width:100%;padding:8px;margin-bottom:12px;border:1px solid #ccc;border-radius:4px;font-size:14px}
-#auth-modal button{width:100%;padding:10px;margin-bottom:8px;border:none;border-radius:4px;font-size:14px;cursor:pointer}
-#auth-modal .btn-login{background:#4A90E2;color:#fff;}
-#auth-modal .btn-register{background:#f0f0f0;color:#333;}
-#auth-modal .btn-close{background:transparent;color:#999;}
+/* 弹窗样式统一优化 */
+.modal-overlay { position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.4); z-index:9998; display:none; }
+.custom-modal { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:#fff; border-radius:8px; padding:24px; box-shadow:0 10px 40px rgba(0,0,0,0.2); z-index:9999; display:none; width:360px; }
+.custom-modal h3 { margin-bottom:16px; font-size:18px; text-align:center; color:#333; }
+.custom-modal input { width:100%; padding:8px; margin-bottom:12px; border:1px solid #ccc; border-radius:4px; font-size:14px; }
+.custom-modal button { width:100%; padding:10px; margin-bottom:8px; border:none; border-radius:4px; font-size:14px; cursor:pointer; }
+.custom-modal .btn-primary { background:#4A90E2; color:#fff; }
+.custom-modal .btn-secondary { background:#f0f0f0; color:#333; }
+.custom-modal .btn-close { background:transparent; color:#999; }
+.custom-modal .btn-close:hover { color:#333; }
 #status{color:#888;font-size:11px;margin-left:auto}
 </style>
 </head>
@@ -60,15 +57,15 @@ body{font-family:-apple-system,"Microsoft YaHei",sans-serif;font-size:12px;backg
   <label>到 <input type="date" id="date-end" /></label>
   <label>缩放 <input type="range" id="zoom" min="15" max="60" value="30" style="vertical-align:middle" /></label>
   
-  <button id="btn-cloud-config">设置云同步</button>
-  <button id="btn-save-cloud" class="safe" style="display:none;">存云端</button>
-  <button id="btn-load-cloud" style="display:none;">拉云端</button>
+  <button id="btn-cloud-config" onclick="openConfigModal()">设置云同步</button>
+  <button id="btn-save-cloud" class="safe" style="display:none;" onclick="saveToCloud()">存云端</button>
+  <button id="btn-load-cloud" style="display:none;" onclick="loadFromCloud()">拉云端</button>
   
-  <button id="btn-auth" class="warn">登录/注册</button>
+  <button id="btn-auth" class="warn" onclick="handleAuthClick()">登录/注册</button>
   
-  <button id="btn-undo">撤销</button>
-  <button id="btn-redo">重做</button>
-  <button id="btn-export">导出 Excel</button>
+  <button id="btn-undo" onclick="undo()">撤销</button>
+  <button id="btn-redo" onclick="redo()">重做</button>
+  <button id="btn-export" onclick="exportExcel()">导出 Excel</button>
   <span id="status">请上传"日程"Excel 文件</span>
 </div>
 <div id="main">
@@ -85,16 +82,33 @@ body{font-family:-apple-system,"Microsoft YaHei",sans-serif;font-size:12px;backg
 </div>
 <div id="selection-box"></div>
 <div id="tooltip"></div>
-<div id="overlay"></div>
-<div id="detail-modal"></div>
 
-<div id="auth-modal">
+<!-- 统一的遮罩层 -->
+<div class="modal-overlay" id="overlay" onclick="closeAllModals()"></div>
+
+<!-- 登录/注册弹窗 -->
+<div class="custom-modal" id="auth-modal">
     <h3>账号登录 / 注册</h3>
     <input type="email" id="auth-email" placeholder="请输入邮箱" />
     <input type="password" id="auth-password" placeholder="请输入密码 (至少6位)" />
-    <button class="btn-login" id="btn-do-login">登 录</button>
-    <button class="btn-register" id="btn-do-register">注 册</button>
-    <button class="btn-close" id="btn-auth-close">关闭</button>
+    <button class="btn-primary" onclick="doLogin()">登 录</button>
+    <button class="btn-secondary" onclick="doRegister()">注 册</button>
+    <button class="btn-close" onclick="closeAllModals()">关闭</button>
+</div>
+
+<!-- 设置云同步弹窗 -->
+<div class="custom-modal" id="config-modal">
+    <h3>云同步设置</h3>
+    <input type="text" id="config-url" placeholder="Supabase Project URL" />
+    <input type="text" id="config-key" placeholder="Supabase Publishable Key" />
+    <button class="btn-primary" onclick="saveConfig()">保存配置</button>
+    <button class="btn-close" onclick="closeAllModals()">关闭</button>
+</div>
+
+<!-- 详情弹窗 -->
+<div class="custom-modal" id="detail-modal" style="width: 400px;">
+    <div id="detail-content"></div>
+    <button class="btn-secondary" onclick="closeAllModals()" style="margin-top:16px;">关闭</button>
 </div>
 
 <script>
@@ -106,7 +120,6 @@ let SUPABASE_KEY = 'sb_publishable_bLoMgVcw3cv7hO8bJyVplA_O_ESlK6j';
 // ==========================================
 
 const ROW_H=80, BAR_H=8, BAR_GAP=4, PAD_TOP=6;
-// 按用户要求硬编码最新颜色
 const PHASES=[
   {key:'切割',start:'cuttingStart',end:'cuttingEnd',color:'#FFF2CA'},
   {key:'部件',start:'partStart',end:'partEnd',color:'#FFC000'},
@@ -124,7 +137,7 @@ let sbClient = null;
 let undoStack = [];
 let redoStack = [];
 let currentUser = null;
-let isApproved = false; // 是否在白名单
+let isApproved = false;
 
 const pad2=n=>String(n).padStart(2,'0');
 const fmtDate=d=>d?`${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`:'';
@@ -147,7 +160,79 @@ function parseDateVal(v){
   return null;
 }
 
-// ==== 初始化 ====
+// ================= 弹窗控制 =================
+function openModal(id) {
+    closeAllModals();
+    document.getElementById('overlay').style.display = 'block';
+    document.getElementById(id).style.display = 'block';
+}
+function closeAllModals() {
+    document.getElementById('overlay').style.display = 'none';
+    document.querySelectorAll('.custom-modal').forEach(el => el.style.display = 'none');
+}
+
+function openConfigModal() {
+    document.getElementById('config-url').value = SUPABASE_URL;
+    document.getElementById('config-key').value = SUPABASE_KEY;
+    openModal('config-modal');
+}
+
+async function saveConfig() {
+    SUPABASE_URL = document.getElementById('config-url').value.trim();
+    SUPABASE_KEY = document.getElementById('config-key').value.trim();
+    localStorage.setItem('sb_url', SUPABASE_URL);
+    localStorage.setItem('sb_key', SUPABASE_KEY);
+    await initSupabase();
+    closeAllModals();
+    alert("配置已保存！");
+}
+
+// ================= 登录/注册逻辑 =================
+function handleAuthClick() {
+    if (currentUser) {
+        if(confirm("确定要退出登录吗？")) {
+            if(sbClient) sbClient.auth.signOut().then(()=>{
+                currentUser = null;
+                isApproved = false;
+                updateAuthUI(null);
+            });
+        }
+    } else {
+        openModal('auth-modal');
+    }
+}
+
+async function doLogin() {
+    if(!sbClient) return alert('请先点击顶部“设置云同步”填写URL和Key');
+    const email = document.getElementById('auth-email').value;
+    const password = document.getElementById('auth-password').value;
+    if(!email || !password) return alert('请输入邮箱和密码');
+    
+    const { data, error } = await sbClient.auth.signInWithPassword({ email, password });
+    if (error) return alert('登录失败: ' + error.message);
+    
+    closeAllModals();
+    await checkUserApproval(data.user);
+}
+
+async function doRegister() {
+    if(!sbClient) return alert('请先点击顶部“设置云同步”填写URL和Key');
+    const email = document.getElementById('auth-email').value;
+    const password = document.getElementById('auth-password').value;
+    if(!email || !password) return alert('请输入邮箱和密码');
+    
+    const { data, error } = await sbClient.auth.signUp({ email, password });
+    if (error) return alert('注册失败: ' + error.message);
+    
+    if(data.user && data.session) {
+        closeAllModals();
+        await checkUserApproval(data.user);
+    } else {
+        alert('注册成功，请前往邮箱验证后再登录。');
+    }
+}
+
+// ================= 系统初始化 =================
 window.onload = async () => {
     SUPABASE_URL = localStorage.getItem('sb_url') || SUPABASE_URL;
     SUPABASE_KEY = localStorage.getItem('sb_key') || SUPABASE_KEY;
@@ -175,6 +260,7 @@ async function initSupabase(){
         sbClient = null;
         document.getElementById('btn-save-cloud').style.display = 'none';
         document.getElementById('btn-load-cloud').style.display = 'none';
+        updateAuthUI(null);
     }
 }
 
@@ -183,7 +269,6 @@ async function checkUserApproval(user) {
     isApproved = false;
     
     try {
-        // 去白名单表查询这个邮箱
         const { data, error } = await sbClient
             .from('approved_users')
             .select('email')
@@ -205,7 +290,7 @@ function updateAuthUI(user) {
         if (isApproved) {
             btn.textContent = `已登录: ${user.email.split('@')[0]} (可编辑)`;
             btn.className = 'safe';
-            setStatus('已登录，且在白名单中，拥有编辑权限');
+            setStatus('已登录，拥有编辑权限');
         } else {
             btn.textContent = `已登录: ${user.email.split('@')[0]} (无权限)`;
             btn.className = 'warn';
@@ -218,63 +303,10 @@ function updateAuthUI(user) {
         btn.title = "点击登录";
         setStatus('未登录，当前为只读模式');
     }
-    // 重绘一下，更新鼠标样式等
-    renderChartOnly();
+    if(state.shipRows.length) renderChartOnly();
 }
 
-// ==== 登录交互 ====
-document.getElementById('btn-auth').addEventListener('click', async () => {
-    if (currentUser) {
-        if(confirm("确定要退出登录吗？")) {
-            await sbClient.auth.signOut();
-            currentUser = null;
-            isApproved = false;
-            updateAuthUI(null);
-        }
-    } else {
-        document.getElementById('auth-modal').style.display = 'block';
-        document.getElementById('overlay').style.display = 'block';
-    }
-});
-
-document.getElementById('btn-auth-close').addEventListener('click', () => {
-    document.getElementById('auth-modal').style.display = 'none';
-    document.getElementById('overlay').style.display = 'none';
-});
-
-document.getElementById('btn-do-login').addEventListener('click', async () => {
-    if(!sbClient) return alert('请先配置云同步');
-    const email = document.getElementById('auth-email').value;
-    const password = document.getElementById('auth-password').value;
-    if(!email || !password) return alert('请输入邮箱和密码');
-    
-    const { data, error } = await sbClient.auth.signInWithPassword({ email, password });
-    if (error) return alert('登录失败: ' + error.message);
-    
-    document.getElementById('auth-modal').style.display = 'none';
-    document.getElementById('overlay').style.display = 'none';
-    await checkUserApproval(data.user);
-});
-
-document.getElementById('btn-do-register').addEventListener('click', async () => {
-    if(!sbClient) return alert('请先配置云同步');
-    const email = document.getElementById('auth-email').value;
-    const password = document.getElementById('auth-password').value;
-    if(!email || !password) return alert('请输入邮箱和密码');
-    
-    const { data, error } = await sbClient.auth.signUp({ email, password });
-    if (error) return alert('注册失败: ' + error.message);
-    
-    if(data.user && data.session) {
-        document.getElementById('auth-modal').style.display = 'none';
-        document.getElementById('overlay').style.display = 'none';
-        await checkUserApproval(data.user);
-    } else {
-        alert('注册成功，请前往邮箱验证后再登录。');
-    }
-});
-
-// ==== 撤销/重做 ====
+// ================= 撤销/重做 =================
 function pushHistory(){
     const snapshot = JSON.stringify(state.rows);
     if(undoStack.length > 0 && undoStack[undoStack.length-1] === snapshot) return;
@@ -283,14 +315,13 @@ function pushHistory(){
     redoStack = [];
 }
 function undo(){
-    if(undoStack.length <= 1) return;
+    if(isReadOnlyMode() || undoStack.length <= 1) return;
     const current = undoStack.pop();
     redoStack.push(current);
-    const prev = undoStack[undoStack.length-1];
-    restoreSnapshot(prev);
+    restoreSnapshot(undoStack[undoStack.length-1]);
 }
 function redo(){
-    if(redoStack.length === 0) return;
+    if(isReadOnlyMode() || redoStack.length === 0) return;
     const snapshot = redoStack.pop();
     undoStack.push(snapshot);
     restoreSnapshot(snapshot);
@@ -306,10 +337,12 @@ function restoreSnapshot(str){
     renderChartOnly();
 }
 
-// ==== 数据处理 ====
+// ================= 数据处理 (合并逻辑) =================
 function importExcelData(newRows){
     const newShips = new Set(newRows.map(r => r.shipNo));
+    // 过滤出本地已有，但本次没上传的船号的数据（保留）
     const keptRows = state.rows.filter(r => !newShips.has(r.shipNo));
+    // 合并（新上传的覆盖旧船，没传的保留）
     state.rows = [...keptRows, ...newRows];
     
     state.ships=[...new Set(state.rows.map(r=>r.shipNo))].sort();
@@ -364,8 +397,6 @@ async function importExcel(file){
       });
     }
     if(!rows.length){alert('未读到数据行');return;}
-
-    // 由于颜色已经硬编码，这里不再读取 Excel 里的颜色表
     importExcelData(rows);
     setStatus(`已导入 ${rows.length} 条分段数据`);
   }catch(err){console.error(err);alert('导入失败: '+err.message);}
@@ -378,7 +409,7 @@ function updateShipSelect(){
 }
 function setStatus(m){document.getElementById('status').textContent=m;}
 
-// ==== 核心渲染逻辑 ====
+// ================= 渲染逻辑 =================
 function processData(){
   if(!state.shipNo){state.shipRows=[];state.bars=[];return;}
   const rows=state.rows.filter(r=>r.shipNo===state.shipNo);
@@ -584,12 +615,11 @@ function renderChart(){
     const x2=(daysBetween(state.dateStart,bar.end)+1)*state.dayWidth;
     const y=bar.rowIdx*ROW_H+PAD_TOP+bar.track*(BAR_H+BAR_GAP);
     const w=Math.max(x2-x1,2);
-    const color=bar.phase.color; // 直接使用硬编码颜色
     
     const rect=document.createElementNS(NS,'rect');
     rect.setAttribute('x',x1);rect.setAttribute('y',y);
     rect.setAttribute('width',w);rect.setAttribute('height',BAR_H);
-    rect.setAttribute('fill',color);rect.setAttribute('rx',2);
+    rect.setAttribute('fill',bar.phase.color);rect.setAttribute('rx',2);
     rect.setAttribute('class','bar'+(state.selected.has(bar.id)?' selected':''));
     rect.setAttribute('data-bar-id',bar.id);
     frag.appendChild(rect);
@@ -679,7 +709,7 @@ function drawShortArrow(frag,x,y,targetRow,ph,start,end,cycle, targetGroupKey=nu
   g.appendChild(path); frag.appendChild(g);
 }
 
-// ==== 框选与拖拽（加入未登录拦截） ====
+// ================= 框选与拖拽 =================
 let isBoxSelecting = false;
 let startX=0, startY=0;
 const boxEl = document.getElementById('selection-box');
@@ -704,7 +734,6 @@ rightPanel.addEventListener('mousedown', e => {
             }, 0);
             return;
         }
-        
         initDrag(el, bar, e);
         return;
     }
@@ -728,7 +757,7 @@ rightPanel.addEventListener('mousedown', e => {
 });
 
 function isReadOnlyMode() {
-    return !isApproved; // 只有通过白名单校验才能编辑
+    return !isApproved; 
 }
 
 function initDrag(el, bar, e) {
@@ -902,7 +931,6 @@ document.addEventListener('keydown', e => {
 });
 
 function applyDrag(bar,mode,days, isBatch){
-  if (isReadOnlyMode()) return;
   const r=bar.row, ph=bar.phase;
   
   if(bar.isArrow){
@@ -976,22 +1004,9 @@ function applyDrag(bar,mode,days, isBatch){
 }
 
 // ================= 云端同步 =================
-document.getElementById('btn-cloud-config').addEventListener('click', ()=>{
-    const url = prompt("请输入 Supabase Project URL:", SUPABASE_URL);
-    if(url === null) return;
-    const key = prompt("请输入 Supabase Publishable Key:", SUPABASE_KEY);
-    if(key === null) return;
-    SUPABASE_URL = url.trim();
-    SUPABASE_KEY = key.trim();
-    localStorage.setItem('sb_url', SUPABASE_URL);
-    localStorage.setItem('sb_key', SUPABASE_KEY);
-    initSupabase();
-    alert("配置已保存！");
-});
-
-document.getElementById('btn-save-cloud').addEventListener('click', async ()=>{
-    if(!sbClient) { alert('请先配置云同步'); return; }
-    if(!isApproved) { alert('您当前没有编辑权限！\n1. 请先登录。\n2. 或者联系管理员将您的邮箱加入白名单。'); return; }
+async function saveToCloud() {
+    if(!sbClient) { alert('请先点击顶部“设置云同步”填写URL和Key'); return; }
+    if(!isApproved) { alert('您当前没有编辑权限！请先登录，或联系管理员将您的邮箱加入白名单。'); return; }
     if(!state.rows.length) { alert('本地没有数据'); return; }
     setStatus('正在保存到云端...');
     try {
@@ -1000,16 +1015,17 @@ document.getElementById('btn-save-cloud').addEventListener('click', async ()=>{
             .upsert({ id: 'default', data: state.rows, updated_at: new Date() });
         if (error) throw error;
         setStatus('云端保存成功');
+        alert('云端保存成功！');
     } catch(e) {
         console.error(e);
         setStatus('云端保存失败：' + e.message);
         alert('保存失败：' + e.message);
     }
-});
+}
 
-document.getElementById('btn-load-cloud').addEventListener('click', async ()=>{
-    if(!sbClient) { alert('请先配置云同步'); return; }
-    if(!confirm('拉取云端数据将覆盖本地未保存的数据，确认拉取吗？')) return;
+async function loadFromCloud() {
+    if(!sbClient) { alert('请先点击顶部“设置云同步”填写URL和Key'); return; }
+    if(!confirm('拉取云端数据将合并/覆盖本地对应船只的数据，确认拉取吗？')) return;
     setStatus('正在从云端拉取...');
     try {
         const { data, error } = await sbClient
@@ -1026,6 +1042,7 @@ document.getElementById('btn-load-cloud').addEventListener('click', async ()=>{
             });
             importExcelData(rows);
             setStatus('云端拉取成功');
+            alert('云端拉取成功！');
         } else {
             setStatus('云端无数据');
         }
@@ -1034,7 +1051,7 @@ document.getElementById('btn-load-cloud').addEventListener('click', async ()=>{
         setStatus('拉取失败：' + e.message);
         alert('拉取失败：' + e.message);
     }
-});
+}
 
 // ================= 其余辅助逻辑 =================
 const tooltipEl=document.getElementById('tooltip');
@@ -1065,8 +1082,8 @@ document.addEventListener('click',e=>{
   if(!bar)return;
   const s=bar.tooltipStart||bar.start, e2=bar.end;
   const cyc=bar.tooltipStart?daysBetween(bar.tooltipStart,e2):bar.cycle;
-  const modal=document.getElementById('detail-modal');
-  modal.innerHTML=`<h3>${bar.row.segNo} - ${bar.phase.key}</h3>
+  
+  document.getElementById('detail-content').innerHTML = `<h3>${bar.row.segNo} - ${bar.phase.key}</h3>
     <table>
       <tr><td>船号</td><td>${bar.row.shipNo}</td></tr>
       <tr><td>分段号</td><td>${bar.row.segNo}</td></tr>
@@ -1076,17 +1093,8 @@ document.addEventListener('click',e=>{
       <tr><td>开工</td><td>${fmtDate(s)}</td></tr>
       <tr><td>完工</td><td>${fmtDate(e2)}</td></tr>
       <tr><td>周期</td><td>${cyc} 天</td></tr>
-    </table>
-    <div style="margin-top:12px;text-align:right">
-      <button onclick="document.getElementById('detail-modal').style.display='none';document.getElementById('overlay').style.display='none'">关闭</button>
-    </div>`;
-  modal.style.display='block';
-  document.getElementById('overlay').style.display='block';
-});
-document.getElementById('overlay').addEventListener('click',()=>{
-  document.getElementById('detail-modal').style.display='none';
-  document.getElementById('overlay').style.display='none';
-  document.getElementById('auth-modal').style.display='none';
+    </table>`;
+  openModal('detail-modal');
 });
 
 document.getElementById('right-panel').addEventListener('scroll',function(){
@@ -1166,9 +1174,6 @@ document.getElementById('date-start').addEventListener('change',e=>{
 document.getElementById('date-end').addEventListener('change',e=>{
   state.dateEnd=parseDateVal(e.target.value);render();
 });
-document.getElementById('btn-undo').addEventListener('click', undo);
-document.getElementById('btn-redo').addEventListener('click', redo);
-document.getElementById('btn-export').addEventListener('click',exportExcel);
 
 </script>
 </body>
