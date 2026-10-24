@@ -1,0 +1,1043 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>中日程看板 - 计划调整</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,"Microsoft YaHei",sans-serif;font-size:12px;background:#f5f5f5;user-select:none;}
+#toolbar{display:flex;gap:8px;padding:8px 12px;background:#fff;border-bottom:1px solid #ddd;align-items:center;flex-wrap:wrap;min-height:56px}
+#toolbar button,#toolbar select,#toolbar input[type=date],#toolbar input[type=text]{font-size:12px;padding:4px 8px;border:1px solid #ccc;border-radius:3px;background:#fff;cursor:pointer}
+#toolbar button.primary{background:#4A90E2;color:#fff;border-color:#4A90E2}
+#toolbar button.safe{background:#52c41a;color:#fff;border-color:#52c41a}
+#main{display:flex;height:calc(100vh - 56px);overflow:hidden}
+#left-panel{width:280px;flex-shrink:0;background:#fff;border-right:2px solid #999;display:flex;flex-direction:column;overflow:hidden}
+#left-head{display:grid;grid-template-columns:50px 90px 80px 60px;border-bottom:1px solid #ddd;background:#f0f0f0;font-weight:bold;flex-shrink:0}
+#left-head>div{display:flex;align-items:center;justify-content:center;border-right:1px solid #ddd}
+#left-body{flex:1;overflow:hidden;position:relative}
+#left-rows-inner{position:absolute;top:0;left:0;right:0;will-change:transform}
+.left-row{display:grid;grid-template-columns:50px 90px 80px 60px;height:80px;border-bottom:1px solid #eee;background:#fff}
+.left-row>div{display:flex;align-items:center;justify-content:center;border-right:1px solid #f0f0f0;padding:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#right-panel{flex:1;overflow:auto;background:#fff;position:relative}
+#right-content{position:relative;display:inline-block;min-width:100%}
+#date-header{position:sticky;top:0;z-index:10;background:#fff;border-bottom:1px solid #ddd}
+.h-row{display:flex;align-items:stretch;border-bottom:1px solid #f0f0f0}
+.h-row-cell{display:flex;align-items:center;justify-content:center;font-size:11px;border-right:1px solid #e0e0e0;flex-shrink:0;overflow:hidden}
+.h-day{display:flex;align-items:center;justify-content:center;font-size:10px;border-right:1px solid #eee;flex-shrink:0;overflow:hidden}
+#chart-svg{display:block}
+.bar{cursor:move; transition: opacity 0.1s;}
+.bar.selected, .arrow-mark.selected { stroke: #000 !important; stroke-width: 2px !important; stroke-dasharray: 2 1;}
+.arrow-mark{cursor:move; transition: opacity 0.1s;}
+.dragging { opacity: 0.5 !important; cursor: grabbing !important; }
+#selection-box{position:absolute;border:1px solid #4A90E2;background:rgba(74,144,226,0.1);pointer-events:none;display:none;z-index:999;}
+#tooltip{position:fixed;background:rgba(0,0,0,0.85);color:#fff;padding:8px 12px;border-radius:4px;font-size:12px;line-height:1.6;pointer-events:none;z-index:9999;display:none;max-width:320px}
+#overlay{position:fixed;inset:0;background:rgba(0,0,0,0.3);z-index:9998;display:none}
+#detail-modal{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;border-radius:8px;padding:20px;box-shadow:0 10px 40px rgba(0,0,0,0.2);z-index:9999;display:none;min-width:380px}
+#detail-modal h3{margin-bottom:12px;font-size:15px}
+#detail-modal table{width:100%;border-collapse:collapse}
+#detail-modal td{padding:5px 8px;border-bottom:1px solid #f0f0f0}
+#detail-modal td:first-child{color:#666;width:100px}
+#status{color:#888;font-size:11px;margin-left:auto}
+</style>
+</head>
+<body>
+<div id="toolbar">
+  <input type="file" id="file-input" accept=".xlsx,.xls" />
+  <label>船号 <select id="ship-select"></select></label>
+  <label>从 <input type="date" id="date-start" /></label>
+  <label>到 <input type="date" id="date-end" /></label>
+  <label>缩放 <input type="range" id="zoom" min="15" max="60" value="30" style="vertical-align:middle" /></label>
+  
+  <button id="btn-undo">撤销</button>
+  <button id="btn-redo">重做</button>
+  
+  <button id="btn-cloud-config">设置云同步</button>
+  <button id="btn-save-cloud" class="safe" style="display:none;">存云端</button>
+  <button id="btn-load-cloud" style="display:none;">拉云端</button>
+  
+  <button id="btn-export">导出 Excel</button>
+  <span id="status">请上传"日程"Excel 文件</span>
+</div>
+<div id="main">
+  <div id="left-panel">
+    <div id="left-head"><div>船号</div><div>总组号</div><div>预组号</div><div>分段号</div></div>
+    <div id="left-body"><div id="left-rows-inner"></div></div>
+  </div>
+  <div id="right-panel">
+    <div id="right-content">
+      <div id="date-header"></div>
+      <svg id="chart-svg"></svg>
+    </div>
+  </div>
+</div>
+<div id="selection-box"></div>
+<div id="tooltip"></div>
+<div id="overlay"></div>
+<div id="detail-modal"></div>
+
+<script>
+'use strict';
+
+// ================= 配置区 =================
+let SUPABASE_URL = 'https://qaffdlewwsfzgoruhjho.supabase.co'; 
+let SUPABASE_KEY = 'sb_publishable_bLoMgVcw3cv7hO8bJyVplA_O_ESlK6j';
+// ==========================================
+
+const ROW_H=80, BAR_H=8, BAR_GAP=4, PAD_TOP=6;
+const PHASES=[
+  {key:'切割',start:'cuttingStart',end:'cuttingEnd',color:'#4A90E2'},
+  {key:'部件',start:'partStart',end:'partEnd',color:'#7ED321'},
+  {key:'在胎',start:'layStart',end:'layEnd',color:'#F5A623'},
+  {key:'结构',start:'layEnd',end:'structEnd',color:'#D0021B',tooltipStart:'layStart',isStructure:true},
+  {key:'预装',start:'preInstallStart',end:'preInstallEnd',color:'#9013FE'},
+  {key:'预组',start:'preGroupStart',end:'preGroupEnd',color:'#50E3C2',groupBy:'preNo'},
+  {key:'涂装',start:'coatStart',end:'coatEnd',color:'#B8E986'},
+  {key:'总组',start:'totalStart',end:'totalEnd',color:'#F8E71C',groupBy:'totalNo'},
+  {key:'船台/坞',start:'gatherStart',end:'launch',color:'#BD10E0',shipLevel:true},
+];
+const state={rows:[],ships:[],shipNo:null,shipRows:[],groups:{pre:new Map(),total:new Map()},shipRange:null,dateStart:null,dateEnd:null,dayWidth:30,barColors:{},bars:[],selected:new Set(),drag:null};
+
+let sbClient = null;
+let undoStack = [];
+let redoStack = [];
+
+const pad2=n=>String(n).padStart(2,'0');
+const fmtDate=d=>d?`${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`:'';
+const addDays=(d,n)=>new Date(d.getFullYear(),d.getMonth(),d.getDate()+n);
+const daysBetween=(a,b)=>Math.round((b-a)/86400000);
+const uid=()=>Math.random().toString(36).slice(2,10);
+
+function parseDateVal(v){
+  if(v==null||v==='')return null;
+  if(v instanceof Date)return new Date(v.getFullYear(),v.getMonth(),v.getDate());
+  if(typeof v==='number'){const d=new Date(Date.UTC(1899,11,30)+v*86400000);return new Date(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate());}
+  if(typeof v==='string'){const s=v.trim().split(' ')[0];const p=s.split(/[-\/]/);if(p.length===3){const[y,m,d]=p.map(Number);if(y&&m&&d)return new Date(y,m-1,d);}return null;}
+  return null;
+}
+
+// ==== 初始化 ====
+window.onload = () => {
+    SUPABASE_URL = localStorage.getItem('sb_url') || SUPABASE_URL;
+    SUPABASE_KEY = localStorage.getItem('sb_key') || SUPABASE_KEY;
+    initSupabase();
+    
+    if(loadFromLocal()){
+        pushHistory(); 
+        render();
+    }
+};
+
+function initSupabase(){
+    if(SUPABASE_URL && SUPABASE_KEY && window.supabase){
+        sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        document.getElementById('btn-save-cloud').style.display = 'inline-block';
+        document.getElementById('btn-load-cloud').style.display = 'inline-block';
+        setStatus('云同步已就绪');
+    } else {
+        sbClient = null;
+        document.getElementById('btn-save-cloud').style.display = 'none';
+        document.getElementById('btn-load-cloud').style.display = 'none';
+    }
+}
+
+// ==== 撤销/重做 ====
+function pushHistory(){
+    const snapshot = JSON.stringify(state.rows);
+    if(undoStack.length > 0 && undoStack[undoStack.length-1] === snapshot) return;
+    undoStack.push(snapshot);
+    if(undoStack.length > 50) undoStack.shift();
+    redoStack = [];
+}
+function undo(){
+    if(undoStack.length <= 1) return;
+    const current = undoStack.pop();
+    redoStack.push(current);
+    const prev = undoStack[undoStack.length-1];
+    restoreSnapshot(prev);
+}
+function redo(){
+    if(redoStack.length === 0) return;
+    const snapshot = redoStack.pop();
+    undoStack.push(snapshot);
+    restoreSnapshot(snapshot);
+}
+function restoreSnapshot(str){
+    state.rows = JSON.parse(str).map(r=>{
+        const o={...r};
+        ['cuttingStart','cuttingEnd','partStart','partEnd','layStart','layEnd','structEnd','preInstallStart','preInstallEnd','preGroupStart','preGroupEnd','coatStart','coatEnd','totalStart','totalEnd','gatherStart','launch'].forEach(k=>{o[k]=parseDateVal(o[k]);});
+        return o;
+    });
+    state.selected.clear();
+    processData(); 
+    renderChartOnly();
+}
+
+// ==== 数据处理 ====
+function importExcelData(rows){
+    state.rows=rows;
+    state.ships=[...new Set(rows.map(r=>r.shipNo))].sort();
+    state.shipNo=state.ships[0];
+    const allD=[];
+    rows.forEach(r=>PHASES.forEach(p=>{if(r[p.start]instanceof Date)allD.push(r[p.start]);if(r[p.end]instanceof Date)allD.push(r[p.end]);}));
+    if(allD.length){
+      const min=Math.min(...allD.map(d=>d.getTime()));
+      const max=Math.max(...allD.map(d=>d.getTime()));
+      state.dateStart=new Date(new Date(min).getFullYear(),new Date(min).getMonth(),1);
+      state.dateEnd=new Date(new Date(max).getFullYear(),new Date(max).getMonth()+1,0);
+    }else{
+      state.dateStart=new Date(2027,7,1);state.dateEnd=new Date(2028,3,30);
+    }
+    updateShipSelect();
+    saveToLocal();
+    pushHistory();
+    render();
+}
+
+async function importExcel(file){
+  try{
+    const data=await file.arrayBuffer();
+    const wb=XLSX.read(data,{type:'array'});
+    const sheet=wb.Sheets['日程'];
+    if(!sheet){alert('未找到"日程"sheet');return;}
+    const arr=XLSX.utils.sheet_to_json(sheet,{header:1,defval:null,raw:true});
+    if(!arr.length)return;
+    const col={};
+    arr[0].forEach((h,i)=>{if(h)col[String(h).trim()]=i;});
+    const rows=[];
+    for(let i=1;i<arr.length;i++){
+      const r=arr[i];if(!r)continue;
+      const seg=r[col['分段号']];
+      if(seg==null||String(seg).trim()==='')continue;
+      rows.push({
+        id:uid(),excelRow:i+1,
+        shipNo:String(r[col['船号']]||'').trim(),
+        segNo:String(seg).trim(),
+        totalNo:String(r[col['总组号']]||'').trim(),
+        preNo:String(r[col['预组号']]||'').trim(),
+        cuttingStart:parseDateVal(r[col['切割开工']]),cuttingEnd:parseDateVal(r[col['切割完工']]),
+        partStart:parseDateVal(r[col['部件开工']]),partEnd:parseDateVal(r[col['部件完工']]),
+        layStart:parseDateVal(r[col['分段上胎']]),layEnd:parseDateVal(r[col['分段下胎']]),
+        structEnd:parseDateVal(r[col['结构完工']]),
+        preInstallStart:parseDateVal(r[col['预装开工']]),preInstallEnd:parseDateVal(r[col['预装完工']]),
+        preGroupStart:parseDateVal(r[col['预组开工']]),preGroupEnd:parseDateVal(r[col['预组完工']]),
+        coatStart:parseDateVal(r[col['涂装开工']]),coatEnd:parseDateVal(r[col['涂装完工']]),
+        totalStart:parseDateVal(r[col['总组开工']]),totalEnd:parseDateVal(r[col['总组完工']]),
+        gatherStart:parseDateVal(r[col['合拢开工']]),launch:parseDateVal(r[col['下水/出坞']]),
+      });
+    }
+    if(!rows.length){alert('未读到数据行');return;}
+
+    const colorSheet=wb.Sheets['条形颜色'];
+    if(colorSheet){
+      const cArr=XLSX.utils.sheet_to_json(colorSheet,{header:1,defval:null});
+      let opRowIdx=-1;
+      for(let i=0;i<cArr.length;i++){
+        if(cArr[i] && cArr[i][1]==='工序'){opRowIdx=i;break;}
+      }
+      if(opRowIdx!==-1 && cArr[opRowIdx+1] && cArr[opRowIdx+1][1]==='颜色'){
+        const ops=cArr[opRowIdx];
+        const cols=cArr[opRowIdx+1];
+        for(let c=2;c<ops.length;c++){
+          if(ops[c] && cols[c]){
+            let colStr=String(cols[c]).trim();
+            if(!colStr.startsWith('#')) colStr='#'+colStr;
+            state.barColors[ops[c]]=colStr;
+          }
+        }
+      }
+    }
+    importExcelData(rows);
+    setStatus(`已导入 ${rows.length} 条分段数据`);
+  }catch(err){console.error(err);alert('导入失败: '+err.message);}
+}
+
+function updateShipSelect(){
+  const sel=document.getElementById('ship-select');
+  sel.innerHTML=state.ships.map(s=>`<option value="${s}">${s}</option>`).join('');
+  sel.value=state.shipNo;
+}
+function setStatus(m){document.getElementById('status').textContent=m;}
+
+function processData(){
+  if(!state.shipNo){state.shipRows=[];state.bars=[];return;}
+  const rows=state.rows.filter(r=>r.shipNo===state.shipNo);
+  rows.sort((a,b)=>{
+    const da=a.gatherStart?a.gatherStart.getTime():Infinity;
+    const db=b.gatherStart?b.gatherStart.getTime():Infinity;
+    return da-db;
+  });
+  state.shipRows=rows;
+  state.groups.pre.clear();state.groups.total.clear();
+  
+  rows.forEach(r=>{
+    if(r.preNo){
+      if(!state.groups.pre.has(r.preNo))
+        state.groups.pre.set(r.preNo,{leader:r.id,members:[],start:null,end:null});
+      const g=state.groups.pre.get(r.preNo);
+      g.members.push(r.id);
+      if(r.preGroupStart && (!g.start || r.preGroupStart<g.start)) g.start=r.preGroupStart;
+      if(r.preGroupEnd && (!g.end || r.preGroupEnd>g.end)) g.end=r.preGroupEnd;
+    }
+    if(r.totalNo){
+      if(!state.groups.total.has(r.totalNo))
+        state.groups.total.set(r.totalNo,{leader:r.id,members:[],start:null,end:null});
+      const g=state.groups.total.get(r.totalNo);
+      g.members.push(r.id);
+      if(r.totalStart && (!g.start || r.totalStart<g.start)) g.start=r.totalStart;
+      if(r.totalEnd && (!g.end || r.totalEnd>g.end)) g.end=r.totalEnd;
+    }
+  });
+  
+  if(rows.length){
+    const first=rows[0];
+    const launches=rows.map(r=>r.launch).filter(d=>d instanceof Date);
+    state.shipRange={start:first.gatherStart,end:launches[0]||null,leader:first.id};
+  }else state.shipRange=null;
+}
+
+function render(){
+  processData();
+  renderLeft();renderDateHeader();renderChart();
+  document.getElementById('date-start').value=state.dateStart?fmtDate(state.dateStart):'';
+  document.getElementById('date-end').value=state.dateEnd?fmtDate(state.dateEnd):'';
+}
+function renderChartOnly(){
+  processData();
+  renderLeft(); renderChart();
+}
+
+function renderLeft(){
+  const inner=document.getElementById('left-rows-inner');
+  let lastTotal=null, lastPre=null;
+  inner.innerHTML=state.shipRows.map(r=>{
+    let totalShow='';
+    if(r.totalNo && r.totalNo!==lastTotal){ totalShow=r.totalNo; lastTotal=r.totalNo; }
+    else if(!r.totalNo){ lastTotal=null; }
+    let preShow='';
+    if(r.preNo && r.preNo!==lastPre){ preShow=r.preNo; lastPre=r.preNo; }
+    else if(!r.preNo){ lastPre=null; }
+    return `
+    <div class="left-row">
+      <div title="${r.shipNo}">${r.shipNo}</div>
+      <div title="${totalShow}">${totalShow}</div>
+      <div title="${preShow}">${preShow}</div>
+      <div title="${r.segNo}"><b>${r.segNo}</b></div>
+    </div>`;
+  }).join('');
+}
+
+function renderDateHeader(){
+  const header=document.getElementById('date-header');
+  if(!state.dateStart||!state.dateEnd){header.innerHTML='';return;}
+  const days=daysBetween(state.dateStart,state.dateEnd)+1;
+  const W=state.dayWidth;
+  const H=state.dayWidth; 
+  document.getElementById('left-head').style.height=(H*4)+'px';
+
+  const yearCells=[],monthCells=[];
+  let ys=[],ms=[];
+  for(let i=0;i<days;i++){const d=addDays(state.dateStart,i);ys.push(d.getFullYear());ms.push(d.getMonth()+1);}
+  {let s=0;for(let i=1;i<=days;i++){if(i===days||ys[i]!==ys[s]){yearCells.push(`<div class="h-row-cell" style="width:${(i-s)*W}px;background:#e8f0fe;font-weight:bold;">${ys[s]}年</div>`);s=i;}}}
+  {let s=0;for(let i=1;i<=days;i++){if(i===days||ms[i]!==ms[s]){monthCells.push(`<div class="h-row-cell" style="width:${(i-s)*W}px;background:#f5f5f5;">${ms[s]}月</div>`);s=i;}}}
+  let dayCells='',wdCells='';
+  for(let i=0;i<days;i++){
+    const d=addDays(state.dateStart,i);
+    const we=[0,6].includes(d.getDay());
+    const bg=we?'background:#f8f8f8;':'';
+    dayCells+=`<div class="h-day" style="width:${W}px;${bg}">${d.getDate()}</div>`;
+    wdCells+=`<div class="h-day" style="width:${W}px;${bg}color:${we?'#999':'#555'};">${['日','一','二','三','四','五','六'][d.getDay()]}</div>`;
+  }
+  header.innerHTML=`<div class="h-row" style="height:${H}px">${yearCells.join('')}</div>
+                    <div class="h-row" style="height:${H}px">${monthCells.join('')}</div>
+                    <div class="h-row" style="height:${H}px">${dayCells}</div>
+                    <div class="h-row" style="height:${H}px">${wdCells}</div>`;
+  header.style.width=(days*W)+'px';
+}
+
+function renderChart(){
+  const svg=document.getElementById('chart-svg');
+  const days=state.dateStart&&state.dateEnd?(daysBetween(state.dateStart,state.dateEnd)+1):0;
+  if(!days||!state.shipRows.length){svg.innerHTML='';svg.setAttribute('width',0);svg.setAttribute('height',0);return;}
+  const W=days*state.dayWidth, H=state.shipRows.length*ROW_H;
+  svg.setAttribute('width',W);svg.setAttribute('height',H);
+  svg.style.width=W+'px';svg.style.height=H+'px';
+  const NS='http://www.w3.org/2000/svg';
+  const frag=document.createDocumentFragment();
+  const idxMap=new Map();
+  state.shipRows.forEach((r,i)=>idxMap.set(r.id,i));
+
+  for(let i=0;i<days;i++){
+    const d=addDays(state.dateStart,i);
+    if([0,6].includes(d.getDay())){
+      const rect=document.createElementNS(NS,'rect');
+      rect.setAttribute('x',i*state.dayWidth);rect.setAttribute('y',0);
+      rect.setAttribute('width',state.dayWidth);rect.setAttribute('height',H);
+      rect.setAttribute('fill','#fafafa');frag.appendChild(rect);
+    }
+  }
+  for(let i=0;i<=state.shipRows.length;i++){
+    const line=document.createElementNS(NS,'line');
+    line.setAttribute('x1',0);line.setAttribute('x2',W);
+    line.setAttribute('y1',i*ROW_H);line.setAttribute('y2',i*ROW_H);
+    line.setAttribute('stroke','#eee');frag.appendChild(line);
+  }
+  for(let i=0;i<=days;i++){
+    const x=i*state.dayWidth;
+    const d=addDays(state.dateStart,i);
+    const line=document.createElementNS(NS,'line');
+    line.setAttribute('x1',x);line.setAttribute('x2',x);
+    line.setAttribute('y1',0);line.setAttribute('y2',H);
+    if(i===days){
+      line.setAttribute('stroke','#999');line.setAttribute('stroke-width',1);
+    }else if(d.getDate()===1){
+      line.setAttribute('stroke','#FF4D4F');line.setAttribute('stroke-width',1); 
+    }else if(d.getDay()===1){
+      line.setAttribute('stroke','#999');line.setAttribute('stroke-width',1); 
+    }else{
+      line.setAttribute('stroke','#e0e0e0');line.setAttribute('stroke-dasharray','2 2');line.setAttribute('stroke-width',0.5); 
+    }
+    frag.appendChild(line);
+  }
+  const today=new Date();today.setHours(0,0,0,0);
+  if(today>=state.dateStart&&today<=state.dateEnd){
+    const x=daysBetween(state.dateStart,today)*state.dayWidth;
+    const line=document.createElementNS(NS,'line');
+    line.setAttribute('x1',x);line.setAttribute('x2',x);
+    line.setAttribute('y1',0);line.setAttribute('y2',H);
+    line.setAttribute('stroke','red');line.setAttribute('stroke-dasharray','4 4');line.setAttribute('stroke-width',1.5);
+    frag.appendChild(line);
+  }
+
+  state.bars=[];
+  state.shipRows.forEach((r,i)=>{
+    PHASES.forEach((ph,j)=>{
+      let s=null,e=null,cycle=0,tooltipS=null;
+      if(ph.isStructure){
+        s=r.layEnd ? addDays(r.layEnd, 1) : null;
+        e=r.structEnd;tooltipS=r.layStart;
+        if(!s||!e)return;
+        cycle=daysBetween(tooltipS,e);
+      }else if(ph.groupBy){
+        const key=r[ph.groupBy];if(!key)return;
+        const g=ph.groupBy==='preNo'?state.groups.pre.get(key):state.groups.total.get(key);
+        if(!g||g.leader!==r.id)return;
+        s=g.start;e=g.end;if(!s||!e)return;
+        cycle=daysBetween(s,e);
+        state.bars.push({id:r.id+'-'+ph.key,rowIdx:i,row:r,phase:ph,start:s,end:e,cycle,groupKey:key,isGroup:true});
+        return;
+      }else if(ph.shipLevel){
+        if(!state.shipRange||state.shipRange.leader!==r.id)return;
+        s=state.shipRange.start;e=state.shipRange.end;
+        if(!s||!e)return;
+        cycle=daysBetween(s,e);
+        state.bars.push({id:r.id+'-'+ph.key,rowIdx:i,row:r,phase:ph,start:s,end:e,cycle,isShipLevel:true});
+        return;
+      }else{
+        s=r[ph.start];e=r[ph.end];if(!s||!e)return;
+        cycle=daysBetween(s,e);
+      }
+      state.bars.push({id:r.id+'-'+ph.key,rowIdx:i,row:r,phase:ph,start:s,end:e,cycle,tooltipStart:tooltipS});
+    });
+  });
+
+  const barsByRow = Array.from({length: state.shipRows.length}, () => []);
+  state.bars.forEach(bar => { barsByRow[bar.rowIdx].push(bar); });
+  barsByRow.forEach(rowBars => {
+    rowBars.sort((a,b) => a.start - b.start);
+    let tracks = []; 
+    rowBars.forEach(bar => {
+      let t = 0;
+      while (true) {
+        if (!tracks[t] || tracks[t] < bar.start) {
+          tracks[t] = bar.end;
+          bar.track = t;
+          break;
+        }
+        t++;
+      }
+    });
+  });
+
+  state.bars.forEach(bar => {
+    const x1=daysBetween(state.dateStart,bar.start)*state.dayWidth;
+    const x2=(daysBetween(state.dateStart,bar.end)+1)*state.dayWidth;
+    const y=bar.rowIdx*ROW_H+PAD_TOP+bar.track*(BAR_H+BAR_GAP);
+    const w=Math.max(x2-x1,2);
+    const color=state.barColors[bar.phase.key]||bar.phase.color;
+    
+    const rect=document.createElementNS(NS,'rect');
+    rect.setAttribute('x',x1);rect.setAttribute('y',y);
+    rect.setAttribute('width',w);rect.setAttribute('height',BAR_H);
+    rect.setAttribute('fill',color);rect.setAttribute('rx',2);
+    rect.setAttribute('class','bar'+(state.selected.has(bar.id)?' selected':''));
+    rect.setAttribute('data-bar-id',bar.id);
+    frag.appendChild(rect);
+    
+    bar.x=x1; bar.y=y; bar.w=w;
+  });
+
+  state.groups.pre.forEach((group,key)=>{
+    group.members.forEach(mid=>{
+      const memberRow = state.shipRows.find(x=>x.id===mid);
+      if(!memberRow || !memberRow.preGroupStart) return;
+      const mi=idxMap.get(mid); if(mi==null) return;
+      const arrowX = daysBetween(state.dateStart, memberRow.preGroupStart) * state.dayWidth + state.dayWidth/2;
+      const arrowY = mi*ROW_H + ROW_H/2;
+      drawShortArrow(frag, arrowX, arrowY, memberRow, {key:'预组'}, memberRow.preGroupStart, memberRow.preGroupEnd, daysBetween(memberRow.preGroupStart, memberRow.preGroupEnd), null, null);
+    });
+  });
+
+  state.groups.total.forEach((group,key)=>{
+    const seenPre=new Set();
+    group.members.forEach(mid=>{
+      const r=state.shipRows.find(x=>x.id===mid); if(!r || !r.totalStart) return;
+      let targetRow=r, targetGroupKey = null, targetGroupType = null;
+      if(r.preNo && state.groups.pre.has(r.preNo)){
+        if(seenPre.has(r.preNo))return;
+        seenPre.add(r.preNo);
+        targetGroupKey = r.preNo; targetGroupType = 'pre';
+        targetRow=state.shipRows.find(x=>x.id===state.groups.pre.get(r.preNo).leader);
+      }
+      const mi=idxMap.get(targetRow.id); if(mi==null)return;
+      const arrowX = daysBetween(state.dateStart, r.totalStart) * state.dayWidth + state.dayWidth/2;
+      const arrowY = mi*ROW_H + ROW_H/2;
+      drawShortArrow(frag, arrowX, arrowY, targetRow, {key:'总组'}, r.totalStart, r.totalEnd, daysBetween(r.totalStart, r.totalEnd), targetGroupKey, targetGroupType);
+    });
+  });
+
+  if(state.shipRange){
+    const seenTotal=new Set(),seenPre=new Set();
+    state.shipRows.forEach(r=>{
+      let targetId=null,targetRow=r, gStart = r.gatherStart, targetGroupKey = null, targetGroupType = null;
+      
+      if(r.totalNo && state.groups.total.has(r.totalNo)){
+        if(seenTotal.has(r.totalNo))return;
+        seenTotal.add(r.totalNo);
+        targetGroupKey = r.totalNo; targetGroupType = 'total';
+        targetId=state.groups.total.get(r.totalNo).leader;
+        targetRow=state.shipRows.find(x=>x.id===targetId);
+      }else if(r.preNo && state.groups.pre.has(r.preNo)){
+        if(seenPre.has(r.preNo))return;
+        seenPre.add(r.preNo);
+        targetGroupKey = r.preNo; targetGroupType = 'pre';
+        targetId=state.groups.pre.get(r.preNo).leader;
+        targetRow=state.shipRows.find(x=>x.id===targetId);
+      }else{ targetId=r.id; }
+
+      if(!gStart || !targetRow) return;
+      // 修复：如果没有launch日期，使用全船的launch日期
+      let launchEnd = r.launch || state.shipRange.end || addDays(gStart, 170);
+      
+      const ti=idxMap.get(targetId); if(ti==null)return;
+      const arrowX = daysBetween(state.dateStart, gStart) * state.dayWidth + state.dayWidth/2;
+      const arrowY = ti*ROW_H + ROW_H/2;
+      // 修改：将提示信息的工序改为“合拢”
+      drawShortArrow(frag, arrowX, arrowY, targetRow, {key:'合拢'}, gStart, launchEnd, daysBetween(gStart, launchEnd), targetGroupKey, targetGroupType);
+    });
+  }
+
+  svg.innerHTML='';
+  svg.appendChild(frag);
+}
+
+function drawShortArrow(frag,x,y,targetRow,ph,start,end,cycle, targetGroupKey=null, targetGroupType=null){
+  if(!targetRow)return;
+  const NS='http://www.w3.org/2000/svg';
+  const g=document.createElementNS(NS,'g');
+  const arrowId=`arrow-${targetRow.id}-${ph.key}-${start.getTime()}`;
+  g.setAttribute('class','arrow-mark'+(state.selected.has(arrowId)?' selected':''));
+  g.setAttribute('data-bar-id',arrowId);
+  
+  if(!state.bars.find(b=>b.id===arrowId)){
+    state.bars.push({
+      id:arrowId, row:targetRow, phase:ph, start:start, end:end, cycle:cycle, isArrow: true, groupKey: targetGroupKey, groupType: targetGroupType, x: x, y: y
+    });
+  }
+
+  const path=document.createElementNS(NS,'path');
+  path.setAttribute('d',`M ${x} ${y+6} L ${x} ${y-4} M ${x-3.5} ${y-0.5} L ${x} ${y-5} L ${x+3.5} ${y-0.5}`);
+  path.setAttribute('stroke','red'); path.setAttribute('stroke-width','1.5'); path.setAttribute('fill','none');
+  g.appendChild(path); frag.appendChild(g);
+}
+
+// ==== 框选与拖拽 ====
+let isBoxSelecting = false;
+let startX=0, startY=0;
+const boxEl = document.getElementById('selection-box');
+const rightPanel = document.getElementById('right-panel');
+
+rightPanel.addEventListener('mousedown', e => {
+    const el = e.target.closest('.bar, .arrow-mark');
+    if (el) {
+        e.preventDefault();
+        const bar=(state.bars||[]).find(b=>b.id===el.getAttribute('data-bar-id'));
+        if(!bar) return;
+        
+        if (!state.selected.has(bar.id)) {
+            state.selected.clear();
+            state.selected.add(bar.id);
+            renderChartOnly(); 
+            setTimeout(()=>{
+                const newEl = document.querySelector(`[data-bar-id="${bar.id}"]`);
+                if(newEl) initDrag(newEl, bar, e);
+            }, 0);
+            return;
+        }
+        
+        initDrag(el, bar, e);
+        return;
+    }
+
+    if (e.button !== 0) return;
+    const rect = rightPanel.getBoundingClientRect();
+    isBoxSelecting = true;
+    startX = e.clientX - rect.left + rightPanel.scrollLeft;
+    startY = e.clientY - rect.top + rightPanel.scrollTop;
+    
+    boxEl.style.display = 'block';
+    boxEl.style.left = startX + 'px';
+    boxEl.style.top = startY + 'px';
+    boxEl.style.width = '0px';
+    boxEl.style.height = '0px';
+    
+    if (!e.ctrlKey && !e.metaKey) {
+        state.selected.clear();
+        renderChartOnly();
+    }
+});
+
+function initDrag(el, bar, e) {
+    let mode = 'move';
+    if (el.classList.contains('bar') && e.shiftKey === false) {
+        const box=el.getBoundingClientRect();
+        const relX=e.clientX-box.left;
+        if(relX<4) mode='resize-left';
+        else if(relX>box.width-4) mode='resize-right';
+    }
+    
+    const dragElements = [];
+    state.selected.forEach(id => {
+        const domEl = document.querySelector(`[data-bar-id="${id}"]`);
+        if (domEl) {
+            domEl.classList.add('dragging'); 
+            if (domEl.tagName === 'rect') {
+                dragElements.push({
+                    dom: domEl, type: 'rect',
+                    origX: parseFloat(domEl.getAttribute('x') || 0),
+                    origW: parseFloat(domEl.getAttribute('width') || 0)
+                });
+            } else if (domEl.tagName === 'g') {
+                dragElements.push({
+                    dom: domEl, type: 'g', origX: 0 
+                });
+            }
+        }
+    });
+
+    state.drag = { mode, startX: e.clientX, startY: e.clientY, moved: false, elements: dragElements, lastDelta: 0 };
+    document.body.style.cursor = (mode==='move')?'grabbing':'ew-resize';
+}
+
+rightPanel.addEventListener('mousemove', e => {
+    if (isBoxSelecting) {
+        const rect = rightPanel.getBoundingClientRect();
+        const currentX = e.clientX - rect.left + rightPanel.scrollLeft;
+        const currentY = e.clientY - rect.top + rightPanel.scrollTop;
+        
+        const left = Math.min(startX, currentX);
+        const top = Math.min(startY, currentY);
+        const width = Math.abs(currentX - startX);
+        const height = Math.abs(currentY - startY);
+        
+        boxEl.style.left = left + 'px';
+        boxEl.style.top = top + 'px';
+        boxEl.style.width = width + 'px';
+        boxEl.style.height = height + 'px';
+    } else if (state.drag) {
+        const dx = e.clientX - state.drag.startX;
+        if (Math.abs(dx) > 2) state.drag.moved = true;
+        
+        const daysDelta = Math.round(dx / state.dayWidth);
+        const dxPx = daysDelta * state.dayWidth;
+        
+        if (state.drag.lastDelta !== daysDelta) {
+            state.drag.lastDelta = daysDelta;
+            state.drag.elements.forEach(item => {
+                if (item.type === 'rect') {
+                    if (state.drag.mode === 'move') {
+                        item.dom.setAttribute('x', item.origX + dxPx);
+                    } else if (state.drag.mode === 'resize-left') {
+                        item.dom.setAttribute('x', item.origX + dxPx);
+                        item.dom.setAttribute('width', Math.max(2, item.origW - dxPx));
+                    } else if (state.drag.mode === 'resize-right') {
+                        item.dom.setAttribute('width', Math.max(2, item.origW + dxPx));
+                    }
+                } else if (item.type === 'g') {
+                    item.dom.setAttribute('transform', `translate(${dxPx}, 0)`);
+                }
+            });
+        }
+    }
+});
+
+rightPanel.addEventListener('mouseup', e => {
+    if (isBoxSelecting) {
+        isBoxSelecting = false;
+        boxEl.style.display = 'none';
+        
+        const rect = rightPanel.getBoundingClientRect();
+        const endX = e.clientX - rect.left + rightPanel.scrollLeft;
+        const endY = e.clientY - rect.top + rightPanel.scrollTop;
+        
+        const left = Math.min(startX, endX);
+        const top = Math.min(startY, endY);
+        const width = Math.abs(endX - startX);
+        const height = Math.abs(endY - startY);
+        
+        if (width > 5 && height > 5) {
+            state.bars.forEach(bar => {
+                let bx, by, bw, bh;
+                if (bar.isArrow) { bx = bar.x - 5; by = bar.y - 5; bw = 10; bh = 10; } 
+                else { bx = bar.x; by = bar.y; bw = bar.w; bh = BAR_H; }
+                const cx = bx + bw/2;
+                const cy = by + bh/2;
+                if (cx >= left && cx <= left + width && cy >= top && cy <= top + height) {
+                    state.selected.add(bar.id);
+                }
+            });
+        }
+        renderChartOnly();
+        return;
+    }
+    
+    if (!state.drag) return;
+    document.body.style.cursor = '';
+    
+    state.drag.elements.forEach(item => {
+        item.dom.classList.remove('dragging');
+        if (item.type === 'g') item.dom.removeAttribute('transform');
+    });
+    
+    const { mode, moved, lastDelta } = state.drag;
+    state.drag = null;
+    
+    if (!moved || !lastDelta) {
+        renderChartOnly(); 
+        return;
+    }
+    
+    pushHistory(); 
+    
+    if (state.selected.size > 1 && mode === 'move') {
+        state.selected.forEach(id => {
+            const bar = state.bars.find(b => b.id === id);
+            if (bar) applyDrag(bar, 'move', lastDelta, true);
+        });
+    } else {
+        const id = [...state.selected][0];
+        const bar = state.bars.find(b => b.id === id);
+        if (bar) applyDrag(bar, mode, lastDelta, false);
+    }
+    
+    saveToLocal();
+    renderChartOnly();
+});
+
+document.addEventListener('keydown', e => {
+    if (e.ctrlKey || e.metaKey) {
+        if (e.key === 'z' || e.key === 'Z') {
+            if (e.shiftKey) redo(); else undo();
+            e.preventDefault();
+        } else if (e.key === 'y' || e.key === 'Y') {
+            redo();
+            e.preventDefault();
+        }
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        if (state.selected.size > 0) {
+            const days = e.key === 'ArrowLeft' ? -1 : 1;
+            pushHistory();
+            state.selected.forEach(id => {
+                const bar = state.bars.find(b => b.id === id);
+                if (bar) applyDrag(bar, 'move', days, true);
+            });
+            saveToLocal();
+            renderChartOnly();
+            e.preventDefault();
+        }
+    } else if (e.key === 'Escape') {
+        state.selected.clear();
+        renderChartOnly();
+    }
+});
+
+function applyDrag(bar,mode,days, isBatch){
+  const r=bar.row, ph=bar.phase;
+  
+  if(bar.isArrow){
+      if(bar.phase.key === '预组'){
+          const targetRow = state.shipRows.find(x=>x.id===bar.row.id);
+          if(targetRow){
+              if(targetRow.preGroupStart) targetRow.preGroupStart = addDays(targetRow.preGroupStart, days);
+              if(targetRow.preGroupEnd) targetRow.preGroupEnd = addDays(targetRow.preGroupEnd, days);
+          }
+      } else if(bar.phase.key === '总组'){
+          if(bar.groupKey){
+              const g = state.groups.pre.get(bar.groupKey);
+              if(g){
+                  g.members.forEach(mid=>{
+                      const row = state.shipRows.find(x=>x.id===mid);
+                      if(row){
+                          if(row.totalStart) row.totalStart = addDays(row.totalStart, days);
+                          if(row.totalEnd) row.totalEnd = addDays(row.totalEnd, days);
+                      }
+                  });
+              }
+          } else {
+              const targetRow = state.shipRows.find(x=>x.id===bar.row.id);
+              if(targetRow){
+                  if(targetRow.totalStart) targetRow.totalStart = addDays(targetRow.totalStart, days);
+                  if(targetRow.totalEnd) targetRow.totalEnd = addDays(targetRow.totalEnd, days);
+              }
+          }
+      } else if(bar.phase.key === '合拢'){ // 修改这里
+          if(bar.groupKey){
+              let group = null;
+              if(bar.groupType === 'total') group = state.groups.total.get(bar.groupKey);
+              else if(bar.groupType === 'pre') group = state.groups.pre.get(bar.groupKey);
+              if(group){
+                  group.members.forEach(mid=>{
+                      const row = state.shipRows.find(x=>x.id===mid);
+                      if(row && row.gatherStart) row.gatherStart = addDays(row.gatherStart, days);
+                  });
+              }
+          } else {
+              const targetRow = state.shipRows.find(x=>x.id===bar.row.id);
+              if(targetRow && targetRow.gatherStart) targetRow.gatherStart = addDays(targetRow.gatherStart, days);
+          }
+      }
+      return;
+  }
+
+  if(bar.isShipLevel){
+    if(mode==='resize-right'){
+      state.shipRows.forEach(x=>{if(x.launch)x.launch=addDays(x.launch,days);});
+    }else{
+      if(!isBatch && !confirm(`确认将全船合拢开工日期平移 ${days} 天？`))return;
+      state.shipRows.forEach(x=>{if(x.gatherStart)x.gatherStart=addDays(x.gatherStart,days);});
+    }
+  }else if(bar.isGroup){
+    const members=ph.groupBy==='preNo'?state.groups.pre.get(bar.groupKey).members:state.groups.total.get(bar.groupKey).members;
+    const f1=ph.start, f2=ph.end;
+    state.shipRows.forEach(x=>{
+      if(!members.includes(x.id))return;
+      if(mode==='move'){if(x[f1])x[f1]=addDays(x[f1],days);if(x[f2])x[f2]=addDays(x[f2],days);}
+      else if(mode==='resize-left'){if(x[f1])x[f1]=addDays(x[f1],days);}
+      else{if(x[f2])x[f2]=addDays(x[f2],days);}
+    });
+  }else if(ph.isStructure){
+    if(mode==='move'||mode==='resize-right'){if(r.structEnd)r.structEnd=addDays(r.structEnd,days);}
+  }else{
+    if(mode==='move'){if(r[ph.start])r[ph.start]=addDays(r[ph.start],days);if(r[ph.end])r[ph.end]=addDays(r[ph.end],days);}
+    else if(mode==='resize-left'){if(r[ph.start])r[ph.start]=addDays(r[ph.start],days);}
+    else{if(r[ph.end])r[ph.end]=addDays(r[ph.end],days);}
+  }
+}
+
+// ================= 云端同步 =================
+document.getElementById('btn-cloud-config').addEventListener('click', ()=>{
+    const url = prompt("请输入 Supabase Project URL:", SUPABASE_URL);
+    if(url === null) return;
+    const key = prompt("请输入 Supabase Publishable Key:", SUPABASE_KEY);
+    if(key === null) return;
+    SUPABASE_URL = url.trim();
+    SUPABASE_KEY = key.trim();
+    localStorage.setItem('sb_url', SUPABASE_URL);
+    localStorage.setItem('sb_key', SUPABASE_KEY);
+    initSupabase();
+    alert("配置已保存！");
+});
+
+document.getElementById('btn-save-cloud').addEventListener('click', async ()=>{
+    if(!sbClient) { alert('请先配置云同步'); return; }
+    if(!state.rows.length) { alert('本地没有数据'); return; }
+    setStatus('正在保存到云端...');
+    try {
+        const { error } = await sbClient
+            .from('schedules')
+            .upsert({ id: 'default', data: state.rows, updated_at: new Date() });
+        if (error) throw error;
+        setStatus('云端保存成功');
+    } catch(e) {
+        console.error(e);
+        setStatus('云端保存失败：' + e.message);
+        alert('保存失败：' + e.message);
+    }
+});
+
+document.getElementById('btn-load-cloud').addEventListener('click', async ()=>{
+    if(!sbClient) { alert('请先配置云同步'); return; }
+    if(!confirm('拉取云端数据将覆盖本地未保存的数据，确认拉取吗？')) return;
+    setStatus('正在从云端拉取...');
+    try {
+        const { data, error } = await sbClient
+            .from('schedules')
+            .select('data')
+            .eq('id', 'default')
+            .single();
+        if (error) throw error;
+        if (data && data.data) {
+            const rows = data.data.map(r => {
+                const o={...r};
+                ['cuttingStart','cuttingEnd','partStart','partEnd','layStart','layEnd','structEnd','preInstallStart','preInstallEnd','preGroupStart','preGroupEnd','coatStart','coatEnd','totalStart','totalEnd','gatherStart','launch'].forEach(k=>{o[k]=parseDateVal(o[k]);});
+                return o;
+            });
+            importExcelData(rows);
+            setStatus('云端拉取成功');
+        } else {
+            setStatus('云端无数据');
+        }
+    } catch(e) {
+        console.error(e);
+        setStatus('拉取失败：' + e.message);
+        alert('拉取失败：' + e.message);
+    }
+});
+
+// ================= 其余辅助逻辑 =================
+const tooltipEl=document.getElementById('tooltip');
+document.addEventListener('mouseover',e=>{
+  const el=e.target.closest&&e.target.closest('.bar, .arrow-mark');
+  if(!el)return;
+  const bar=(state.bars||[]).find(b=>b.id===el.getAttribute('data-bar-id'));
+  if(!bar)return;
+  const s=bar.tooltipStart||bar.start, e2=bar.end;
+  const cyc=bar.tooltipStart?daysBetween(bar.tooltipStart,e2):bar.cycle;
+  tooltipEl.innerHTML=`<div><b>${bar.row.segNo}</b>${bar.row.preNo?' / '+bar.row.preNo:''}${bar.row.totalNo?' / '+bar.row.totalNo:''}</div>
+    <div>工序：${bar.phase.key}</div><div>开工：${fmtDate(s)}</div><div>完工：${fmtDate(e2)}</div><div>周期：${cyc} 天</div>`;
+  tooltipEl.style.display='block';
+});
+document.addEventListener('mousemove',e=>{
+  if(tooltipEl.style.display==='block'){
+    tooltipEl.style.left=(e.clientX+15)+'px';
+    tooltipEl.style.top=(e.clientY+15)+'px';
+  }
+});
+document.addEventListener('mouseout',e=>{
+  if(e.target.closest&&e.target.closest('.bar, .arrow-mark'))tooltipEl.style.display='none';
+});
+document.addEventListener('click',e=>{
+  const el=e.target.closest&&e.target.closest('.bar, .arrow-mark');
+  if(!el || isBoxSelecting || (state.drag && state.drag.moved))return;
+  const bar=(state.bars||[]).find(b=>b.id===el.getAttribute('data-bar-id'));
+  if(!bar)return;
+  const s=bar.tooltipStart||bar.start, e2=bar.end;
+  const cyc=bar.tooltipStart?daysBetween(bar.tooltipStart,e2):bar.cycle;
+  const modal=document.getElementById('detail-modal');
+  modal.innerHTML=`<h3>${bar.row.segNo} - ${bar.phase.key}</h3>
+    <table>
+      <tr><td>船号</td><td>${bar.row.shipNo}</td></tr>
+      <tr><td>分段号</td><td>${bar.row.segNo}</td></tr>
+      <tr><td>预组号</td><td>${bar.row.preNo||'-'}</td></tr>
+      <tr><td>总组号</td><td>${bar.row.totalNo||'-'}</td></tr>
+      <tr><td>工序</td><td>${bar.phase.key}</td></tr>
+      <tr><td>开工</td><td>${fmtDate(s)}</td></tr>
+      <tr><td>完工</td><td>${fmtDate(e2)}</td></tr>
+      <tr><td>周期</td><td>${cyc} 天</td></tr>
+    </table>
+    <div style="margin-top:12px;text-align:right">
+      <button onclick="document.getElementById('detail-modal').style.display='none';document.getElementById('overlay').style.display='none'">关闭</button>
+    </div>`;
+  modal.style.display='block';
+  document.getElementById('overlay').style.display='block';
+});
+document.getElementById('overlay').addEventListener('click',()=>{
+  document.getElementById('detail-modal').style.display='none';
+  document.getElementById('overlay').style.display='none';
+});
+
+document.getElementById('right-panel').addEventListener('scroll',function(){
+  document.getElementById('left-rows-inner').style.transform=`translateY(-${this.scrollTop}px)`;
+});
+
+function saveToLocal(){ try{localStorage.setItem('ship-schedule-v1',JSON.stringify(state.rows));}catch(err){} }
+function loadFromLocal(){
+  try{
+    const s=localStorage.getItem('ship-schedule-v1');
+    if(!s)return false;
+    const arr=JSON.parse(s);
+    if(!arr.length)return false;
+    state.rows=arr.map(r=>{
+      const o={...r};
+      ['cuttingStart','cuttingEnd','partStart','partEnd','layStart','layEnd','structEnd','preInstallStart','preInstallEnd','preGroupStart','preGroupEnd','coatStart','coatEnd','totalStart','totalEnd','gatherStart','launch'].forEach(k=>{o[k]=parseDateVal(o[k]);});
+      return o;
+    });
+    state.ships=[...new Set(state.rows.map(r=>r.shipNo))].sort();
+    state.shipNo=state.ships[0];
+    const allD=[];
+    state.rows.forEach(r=>PHASES.forEach(p=>{if(r[p.start]instanceof Date)allD.push(r[p.start]);if(r[p.end]instanceof Date)allD.push(r[p.end]);}));
+    if(allD.length){
+      const min=Math.min(...allD.map(d=>d.getTime()));
+      const max=Math.max(...allD.map(d=>d.getTime()));
+      state.dateStart=new Date(new Date(min).getFullYear(),new Date(min).getMonth(),1);
+      state.dateEnd=new Date(new Date(max).getFullYear(),new Date(max).getMonth()+1,0);
+    }
+    updateShipSelect();
+    return true;
+  }catch(err){return false;}
+}
+
+function exportExcel(){
+  if(!state.rows.length){alert('没有数据');return;}
+  const header=['船号','分段号','总组号','预组号','切割周期','切割开工','切割完工','部件周期','部件开工','部件完工','在胎周期','分段上胎','分段下胎','结构完工','预装开工','预装完工','预组周期','预组开工','预组完工','涂装周期','涂装开工','涂装完工','总组周期','总组开工','总组完工','合拢开工','船台/坞周期','下水/出坞'];
+  const data=[header];
+  state.rows.forEach(r=>{
+    data.push([
+      r.shipNo,r.segNo,r.totalNo,r.preNo,
+      r.cuttingStart&&r.cuttingEnd?daysBetween(r.cuttingStart,r.cuttingEnd):'', fmtDate(r.cuttingStart),fmtDate(r.cuttingEnd),
+      r.partStart&&r.partEnd?daysBetween(r.partStart,r.partEnd):'', fmtDate(r.partStart),fmtDate(r.partEnd),
+      r.layStart&&r.layEnd?daysBetween(r.layStart,r.layEnd):'', fmtDate(r.layStart),fmtDate(r.layEnd),
+      fmtDate(r.structEnd), fmtDate(r.preInstallStart),fmtDate(r.preInstallEnd),
+      r.preGroupStart&&r.preGroupEnd?daysBetween(r.preGroupStart,r.preGroupEnd):'', fmtDate(r.preGroupStart),fmtDate(r.preGroupEnd),
+      r.coatStart&&r.coatEnd?daysBetween(r.coatStart,r.coatEnd):'', fmtDate(r.coatStart),fmtDate(r.coatEnd),
+      r.totalStart&&r.totalEnd?daysBetween(r.totalStart,r.totalEnd):'', fmtDate(r.totalStart),fmtDate(r.totalEnd),
+      fmtDate(r.gatherStart), r.gatherStart&&r.launch?daysBetween(r.gatherStart,r.launch):'', fmtDate(r.launch),
+    ]);
+  });
+  const ws=XLSX.utils.aoa_to_sheet(data);
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,'日程');
+  const blob=XLSX.write(wb,{bookType:'xlsx',type:'blob'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  const today=new Date();
+  a.download=`${state.shipNo}-中日程-${today.getFullYear()}${pad2(today.getMonth()+1)}${pad2(today.getDate())}.xlsx`;
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+  setStatus('已导出 Excel');
+}
+
+document.getElementById('file-input').addEventListener('change',async e=>{
+  const f=e.target.files[0];if(f)await importExcel(f);
+});
+document.getElementById('ship-select').addEventListener('change',e=>{
+  state.shipNo=e.target.value;state.selected.clear();render();
+});
+document.getElementById('zoom').addEventListener('input',e=>{
+  state.dayWidth=parseInt(e.target.value);render();
+});
+document.getElementById('date-start').addEventListener('change',e=>{
+  state.dateStart=parseDateVal(e.target.value);render();
+});
+document.getElementById('date-end').addEventListener('change',e=>{
+  state.dateEnd=parseDateVal(e.target.value);render();
+});
+document.getElementById('btn-undo').addEventListener('click', undo);
+document.getElementById('btn-redo').addEventListener('click', redo);
+document.getElementById('btn-export').addEventListener('click',exportExcel);
+
+</script>
+</body>
+</html>
