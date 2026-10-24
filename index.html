@@ -20,7 +20,7 @@ body{font-family:-apple-system,"Microsoft YaHei",sans-serif;font-size:12px;backg
 #left-head>div{display:flex;align-items:center;justify-content:center;border-right:1px solid #ddd}
 #left-body{flex:1;overflow:hidden;position:relative}
 #left-rows-inner{position:absolute;top:0;left:0;right:0;will-change:transform}
-.left-row{display:grid;grid-template-columns:50px 90px 80px 60px;height:80px;border-bottom:1px solid #eee;background:#fff}
+.left-row{display:grid;grid-template-columns:50px 90px 80px 60px;height:50px;border-bottom:1px solid #eee;background:#fff}
 .left-row>div{display:flex;align-items:center;justify-content:center;border-right:1px solid #f0f0f0;padding:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #right-panel{flex:1;overflow:auto;background:#fff;position:relative}
 #right-content{position:relative;display:inline-block;min-width:100%}
@@ -120,7 +120,7 @@ let SUPABASE_URL = 'https://qaffdlewwsfzgoruhjho.supabase.co';
 let SUPABASE_KEY = 'sb_publishable_bLoMgVcw3cv7hO8bJyVplA_O_ESlK6j';
 // ==========================================
 
-const ROW_H=80, BAR_H=8, BAR_GAP=4, PAD_TOP=6;
+const ROW_H=50, BAR_H=8, BAR_GAP=4, PAD_TOP=6;
 const PHASES=[
   {key:'切割',start:'cuttingStart',end:'cuttingEnd',color:'#FFF2CA'},
   {key:'部件',start:'partStart',end:'partEnd',color:'#FFC000'},
