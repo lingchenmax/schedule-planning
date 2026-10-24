@@ -36,7 +36,6 @@ body{font-family:-apple-system,"Microsoft YaHei",sans-serif;font-size:12px;backg
 #selection-box{position:absolute;border:1px solid #4A90E2;background:rgba(74,144,226,0.1);pointer-events:none;display:none;z-index:999;}
 #tooltip{position:fixed;background:rgba(0,0,0,0.85);color:#fff;padding:8px 12px;border-radius:4px;font-size:12px;line-height:1.6;pointer-events:none;z-index:9999;display:none;max-width:320px}
 
-/* 弹窗样式统一优化 */
 .modal-overlay { position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.4); z-index:9998; display:none; }
 .custom-modal { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:#fff; border-radius:8px; padding:24px; box-shadow:0 10px 40px rgba(0,0,0,0.2); z-index:9999; display:none; width:360px; }
 .custom-modal h3 { margin-bottom:16px; font-size:18px; text-align:center; color:#333; }
@@ -57,9 +56,11 @@ body{font-family:-apple-system,"Microsoft YaHei",sans-serif;font-size:12px;backg
   <label>到 <input type="date" id="date-end" /></label>
   <label>缩放 <input type="range" id="zoom" min="15" max="60" value="30" style="vertical-align:middle" /></label>
   
-  <button id="btn-cloud-config" onclick="openConfigModal()">设置云同步</button>
-  <button id="btn-save-cloud" class="safe" style="display:none;" onclick="saveToCloud()">存云端</button>
-  <button id="btn-load-cloud" style="display:none;" onclick="loadFromCloud()">拉云端</button>
+  <!-- 隐藏设置按钮 -->
+  <button id="btn-cloud-config" onclick="openConfigModal()" style="display:none;">设置云同步</button>
+  
+  <button id="btn-save-cloud" class="safe" style="display:none;" onclick="saveToCloud()">保存</button>
+  <button id="btn-load-cloud" style="display:none;" onclick="loadFromCloud()">数据更新</button>
   
   <button id="btn-auth" class="warn" onclick="handleAuthClick()">登录/注册</button>
   
@@ -131,6 +132,8 @@ const PHASES=[
   {key:'总组',start:'totalStart',end:'totalEnd',color:'#FABF8F',groupBy:'totalNo'},
   {key:'船台/坞',start:'gatherStart',end:'launch',color:'#75BD42',shipLevel:true},
 ];
+const DATE_FIELDS = ['cuttingStart','cuttingEnd','partStart','partEnd','layStart','layEnd','structEnd','preInstallStart','preInstallEnd','preGroupStart','preGroupEnd','coatStart','coatEnd','totalStart','totalEnd','gatherStart','launch'];
+
 const state={rows:[],ships:[],shipNo:null,shipRows:[],groups:{pre:new Map(),total:new Map()},shipRange:null,dateStart:null,dateEnd:null,dayWidth:30,barColors:{},bars:[],selected:new Set(),drag:null};
 
 let sbClient = null;
@@ -158,6 +161,26 @@ function parseDateVal(v){
     return null;
   }
   return null;
+}
+
+// 序列化与反序列化（彻底解决时区导致的日期偏移问题）
+function serializeRows(rows) {
+    return rows.map(r => {
+        const o = {...r};
+        DATE_FIELDS.forEach(k => {
+            if (o[k] instanceof Date) o[k] = fmtDate(o[k]);
+        });
+        return o;
+    });
+}
+function deserializeRows(rows) {
+    return rows.map(r => {
+        const o = {...r};
+        DATE_FIELDS.forEach(k => {
+            o[k] = parseDateVal(o[k]);
+        });
+        return o;
+    });
 }
 
 // ================= 弹窗控制 =================
@@ -203,7 +226,7 @@ function handleAuthClick() {
 }
 
 async function doLogin() {
-    if(!sbClient) return alert('请先点击顶部“设置云同步”填写URL和Key');
+    if(!sbClient) return alert('请先配置云同步');
     const email = document.getElementById('auth-email').value;
     const password = document.getElementById('auth-password').value;
     if(!email || !password) return alert('请输入邮箱和密码');
@@ -216,7 +239,7 @@ async function doLogin() {
 }
 
 async function doRegister() {
-    if(!sbClient) return alert('请先点击顶部“设置云同步”填写URL和Key');
+    if(!sbClient) return alert('请先配置云同步');
     const email = document.getElementById('auth-email').value;
     const password = document.getElementById('auth-password').value;
     if(!email || !password) return alert('请输入邮箱和密码');
@@ -308,7 +331,7 @@ function updateAuthUI(user) {
 
 // ================= 撤销/重做 =================
 function pushHistory(){
-    const snapshot = JSON.stringify(state.rows);
+    const snapshot = JSON.stringify(serializeRows(state.rows));
     if(undoStack.length > 0 && undoStack[undoStack.length-1] === snapshot) return;
     undoStack.push(snapshot);
     if(undoStack.length > 50) undoStack.shift();
@@ -327,11 +350,7 @@ function redo(){
     restoreSnapshot(snapshot);
 }
 function restoreSnapshot(str){
-    state.rows = JSON.parse(str).map(r=>{
-        const o={...r};
-        ['cuttingStart','cuttingEnd','partStart','partEnd','layStart','layEnd','structEnd','preInstallStart','preInstallEnd','preGroupStart','preGroupEnd','coatStart','coatEnd','totalStart','totalEnd','gatherStart','launch'].forEach(k=>{o[k]=parseDateVal(o[k]);});
-        return o;
-    });
+    state.rows = deserializeRows(JSON.parse(str));
     state.selected.clear();
     processData(); 
     renderChartOnly();
@@ -339,12 +358,19 @@ function restoreSnapshot(str){
 
 // ================= 数据处理 =================
 function importExcelData(newRows){
+    const currentShip = state.shipNo; // 记住当前的船号
     const newShips = new Set(newRows.map(r => r.shipNo));
     const keptRows = state.rows.filter(r => !newShips.has(r.shipNo));
     state.rows = [...keptRows, ...newRows];
     
     state.ships=[...new Set(state.rows.map(r=>r.shipNo))].sort();
-    state.shipNo = newRows[0].shipNo; 
+    
+    // 恢复之前的船号，如果之前的没了，选最新的
+    if (state.ships.includes(currentShip)) {
+        state.shipNo = currentShip;
+    } else {
+        state.shipNo = newRows[0].shipNo; 
+    }
 
     const allD=[];
     state.rows.forEach(r=>PHASES.forEach(p=>{if(r[p.start]instanceof Date)allD.push(r[p.start]);if(r[p.end]instanceof Date)allD.push(r[p.end]);}));
@@ -526,7 +552,6 @@ function renderChart(){
     }
   }
   
-  // 画横线
   for(let i=0;i<=state.shipRows.length;i++){
     const line=document.createElementNS(NS,'line');
     line.setAttribute('x1',0);line.setAttribute('x2',W);
@@ -537,7 +562,6 @@ function renderChart(){
     frag.appendChild(line);
   }
   
-  // 画竖线
   for(let i=0;i<=days;i++){
     const x=i*state.dayWidth;
     const d=addDays(state.dateStart,i);
@@ -731,7 +755,6 @@ rightPanel.addEventListener('mousedown', e => {
         const bar=(state.bars||[]).find(b=>b.id===el.getAttribute('data-bar-id'));
         if(!bar) return;
         
-        // 如果点击的不是已选中的，先更新选中样式，不要重绘整图
         if (!state.selected.has(bar.id)) {
             state.selected.clear();
             state.selected.add(bar.id);
@@ -767,7 +790,6 @@ rightPanel.addEventListener('mousedown', e => {
         return;
     }
 
-    // 否则开始框选
     const rect = rightPanel.getBoundingClientRect();
     isBoxSelecting = true;
     startX = e.clientX - rect.left + rightPanel.scrollLeft;
@@ -810,7 +832,6 @@ rightPanel.addEventListener('mousemove', e => {
         const dx = e.clientX - state.drag.startX;
         const dy = e.clientY - state.drag.startY;
         
-        // 移动超过 3px 才算拖拽
         if (!state.drag.moved && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) {
             state.drag.moved = true;
             document.body.style.cursor = (state.drag.mode==='move')?'grabbing':'ew-resize';
@@ -882,7 +903,6 @@ rightPanel.addEventListener('mouseup', e => {
     const { mode, moved, lastDelta, elements } = state.drag;
     state.drag = null;
     
-    // 如果只是点击没有移动，直接 return，让 click 事件处理弹窗
     if (!moved) return;
     
     elements.forEach(item => {
@@ -1016,17 +1036,19 @@ function applyDrag(bar,mode,days, isBatch){
 
 // ================= 云端同步 =================
 async function saveToCloud() {
-    if(!sbClient) { alert('请先点击顶部“设置云同步”填写URL和Key'); return; }
+    if(!sbClient) { alert('请先配置云同步'); return; }
     if(!isApproved) { alert('您当前没有编辑权限！请先登录，或联系管理员将您的邮箱加入白名单。'); return; }
     if(!state.rows.length) { alert('本地没有数据'); return; }
     setStatus('正在保存到云端...');
     try {
+        // 关键修改：序列化日期，避免时区偏移
+        const dataToSave = serializeRows(state.rows);
         const { error } = await sbClient
             .from('schedules')
-            .upsert({ id: 'default', data: state.rows, updated_at: new Date() });
+            .upsert({ id: 'default', data: dataToSave, updated_at: new Date() });
         if (error) throw error;
         setStatus('云端保存成功');
-        alert('云端保存成功！');
+        // alert('云端保存成功！'); // 按新要求注释掉提示
     } catch(e) {
         console.error(e);
         setStatus('云端保存失败：' + e.message);
@@ -1035,8 +1057,8 @@ async function saveToCloud() {
 }
 
 async function loadFromCloud() {
-    if(!sbClient) { alert('请先点击顶部“设置云同步”填写URL和Key'); return; }
-    if(!confirm('拉取云端数据将合并/覆盖本地对应船只的数据，确认拉取吗？')) return;
+    if(!sbClient) { alert('请先配置云同步'); return; }
+    if(!confirm('数据更新将用云端数据覆盖本地对应船只的数据，确认更新吗？')) return;
     setStatus('正在从云端拉取...');
     try {
         const { data, error } = await sbClient
@@ -1046,14 +1068,36 @@ async function loadFromCloud() {
             .single();
         if (error) throw error;
         if (data && data.data) {
-            const rows = data.data.map(r => {
-                const o={...r};
-                ['cuttingStart','cuttingEnd','partStart','partEnd','layStart','layEnd','structEnd','preInstallStart','preInstallEnd','preGroupStart','preGroupEnd','coatStart','coatEnd','totalStart','totalEnd','gatherStart','launch'].forEach(k=>{o[k]=parseDateVal(o[k]);});
-                return o;
-            });
-            importExcelData(rows);
+            // 关键修改：反序列化
+            const cloudRows = deserializeRows(data.data);
+            
+            // 保持当前查看的船号，如果当前船号没了，就选最新的第一个
+            const currentShip = state.shipNo;
+            state.rows = cloudRows;
+            state.ships = [...new Set(state.rows.map(r=>r.shipNo))].sort();
+            
+            if (state.ships.includes(currentShip)) {
+                state.shipNo = currentShip;
+            } else {
+                state.shipNo = state.ships[0];
+            }
+            
+            // 重新计算日期范围并渲染
+            const allD=[];
+            state.rows.forEach(r=>PHASES.forEach(p=>{if(r[p.start]instanceof Date)allD.push(r[p.start]);if(r[p.end]instanceof Date)allD.push(r[p.end]);}));
+            if(allD.length){
+              const min=Math.min(...allD.map(d=>d.getTime()));
+              const max=Math.max(...allD.map(d=>d.getTime()));
+              state.dateStart=new Date(new Date(min).getFullYear(),new Date(min).getMonth(),1);
+              state.dateEnd=new Date(new Date(max).getFullYear(),new Date(max).getMonth()+1,0);
+            }
+            updateShipSelect();
+            saveToLocal();
+            pushHistory();
+            render();
+            
             setStatus('云端拉取成功');
-            alert('云端拉取成功！');
+            // alert('云端拉取成功！'); // 按新要求注释掉提示
         } else {
             setStatus('云端无数据');
         }
@@ -1090,7 +1134,6 @@ document.addEventListener('click',e=>{
   const el=e.target.closest&&e.target.closest('.bar, .arrow-mark');
   if(!el || isBoxSelecting)return;
   
-  // 如果刚刚发生了拖拽，不弹窗
   if (state.drag && state.drag.moved) return;
   
   const bar=(state.bars||[]).find(b=>b.id===el.getAttribute('data-bar-id'));
@@ -1116,18 +1159,18 @@ document.getElementById('right-panel').addEventListener('scroll',function(){
   document.getElementById('left-rows-inner').style.transform=`translateY(-${this.scrollTop}px)`;
 });
 
-function saveToLocal(){ try{localStorage.setItem('ship-schedule-v1',JSON.stringify(state.rows));}catch(err){} }
+function saveToLocal(){ 
+    try{
+        localStorage.setItem('ship-schedule-v1', JSON.stringify(serializeRows(state.rows)));
+    }catch(err){}
+}
 function loadFromLocal(){
   try{
     const s=localStorage.getItem('ship-schedule-v1');
     if(!s)return false;
     const arr=JSON.parse(s);
     if(!arr.length)return false;
-    state.rows=arr.map(r=>{
-      const o={...r};
-      ['cuttingStart','cuttingEnd','partStart','partEnd','layStart','layEnd','structEnd','preInstallStart','preInstallEnd','preGroupStart','preGroupEnd','coatStart','coatEnd','totalStart','totalEnd','gatherStart','launch'].forEach(k=>{o[k]=parseDateVal(o[k]);});
-      return o;
-    });
+    state.rows=deserializeRows(arr);
     state.ships=[...new Set(state.rows.map(r=>r.shipNo))].sort();
     state.shipNo=state.ships[0];
     const allD=[];
@@ -1189,6 +1232,8 @@ document.getElementById('date-start').addEventListener('change',e=>{
 document.getElementById('date-end').addEventListener('change',e=>{
   state.dateEnd=parseDateVal(e.target.value);render();
 });
+// 移除多余的绑定，HTML里已经有onclick了，防止重复触发导致下载失败
+// document.getElementById('btn-export').addEventListener('click',exportExcel);
 
 </script>
 </body>
