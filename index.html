@@ -67,6 +67,7 @@ body{font-family:-apple-system,"Microsoft YaHei",sans-serif;font-size:12px;backg
   <button id="btn-undo" onclick="undo()">撤销</button>
   <button id="btn-redo" onclick="redo()">重做</button>
   <button id="btn-export" onclick="exportExcel()">导出 Excel</button>
+  <button class="readonly-on" onclick="deleteCurrentShip()">删除当前船</button>
   <span id="status">请上传"日程"Excel 文件</span>
 </div>
 <div id="main">
@@ -1230,6 +1231,60 @@ function exportExcel(){
     console.error("导出失败", error);
     alert("导出失败：" + error.message);
   }
+}
+// 删除当前船的数据
+function deleteCurrentShip() {
+    if (isReadOnlyMode()) {
+        alert('您没有编辑权限，无法删除数据！');
+        return;
+    }
+    if (!state.shipNo || state.shipRows.length === 0) {
+        alert('当前没有可删除的船只数据！');
+        return;
+    }
+    
+    const shipToDelete = state.shipNo;
+    if (!confirm(`确定要删除【${shipToDelete}】的所有数据吗？\n\n注意：删除后点击本地局部刷新，必须再点击顶部【保存】按钮，才会同步删除云端数据。`)) {
+        return;
+    }
+
+    // 1. 记录历史（用于撤销）
+    pushHistory();
+
+    // 2. 从总数据中过滤掉该船的数据
+    state.rows = state.rows.filter(r => r.shipNo !== shipToDelete);
+    
+    // 3. 更新船只列表
+    state.ships = [...new Set(state.rows.map(r => r.shipNo))].sort();
+    
+    // 4. 切换船号
+    if (state.ships.length > 0) {
+        state.shipNo = state.ships[0];
+    } else {
+        state.shipNo = null;
+    }
+
+    // 5. 重新计算日期范围并刷新视图
+    const allD = [];
+    state.rows.forEach(r => PHASES.forEach(p => {
+        if(r[p.start] instanceof Date) allD.push(r[p.start]);
+        if(r[p.end] instanceof Date) allD.push(r[p.end]);
+    }));
+    
+    if (allD.length) {
+        const min = Math.min(...allD.map(d => d.getTime()));
+        const max = Math.max(...allD.map(d => d.getTime()));
+        state.dateStart = new Date(new Date(min).getFullYear(), new Date(min).getMonth(), 1);
+        state.dateEnd = new Date(new Date(max).getFullYear(), new Date(max).getMonth() + 1, 0);
+    } else {
+        state.dateStart = new Date();
+        state.dateEnd = new Date();
+    }
+
+    updateShipSelect();
+    saveToLocal(); // 存本地
+    render();      // 刷新界面
+    setStatus(`已删除船只 ${shipToDelete}，请记得点击【保存】同步云端`);
 }
 
 document.getElementById('file-input').addEventListener('change',async e=>{
