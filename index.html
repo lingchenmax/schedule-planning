@@ -56,9 +56,7 @@ body{font-family:-apple-system,"Microsoft YaHei",sans-serif;font-size:12px;backg
   <label>到 <input type="date" id="date-end" /></label>
   <label>缩放 <input type="range" id="zoom" min="15" max="60" value="30" style="vertical-align:middle" /></label>
   
-  <!-- 隐藏设置按钮 -->
   <button id="btn-cloud-config" onclick="openConfigModal()" style="display:none;">设置云同步</button>
-  
   <button id="btn-save-cloud" class="safe" style="display:none;" onclick="saveToCloud()">保存</button>
   <button id="btn-load-cloud" style="display:none;" onclick="loadFromCloud()">数据更新</button>
   
@@ -84,11 +82,8 @@ body{font-family:-apple-system,"Microsoft YaHei",sans-serif;font-size:12px;backg
 </div>
 <div id="selection-box"></div>
 <div id="tooltip"></div>
-
-<!-- 统一的遮罩层 -->
 <div class="modal-overlay" id="overlay" onclick="closeAllModals()"></div>
 
-<!-- 登录/注册弹窗 -->
 <div class="custom-modal" id="auth-modal">
     <h3>账号登录 / 注册</h3>
     <input type="email" id="auth-email" placeholder="请输入邮箱" />
@@ -98,7 +93,6 @@ body{font-family:-apple-system,"Microsoft YaHei",sans-serif;font-size:12px;backg
     <button class="btn-close" onclick="closeAllModals()">关闭</button>
 </div>
 
-<!-- 设置云同步弹窗 -->
 <div class="custom-modal" id="config-modal">
     <h3>云同步设置</h3>
     <input type="text" id="config-url" placeholder="Supabase Project URL" />
@@ -107,7 +101,6 @@ body{font-family:-apple-system,"Microsoft YaHei",sans-serif;font-size:12px;backg
     <button class="btn-close" onclick="closeAllModals()">关闭</button>
 </div>
 
-<!-- 详情弹窗 -->
 <div class="custom-modal" id="detail-modal" style="width: 400px;">
     <div id="detail-content"></div>
     <button class="btn-secondary" onclick="closeAllModals()" style="margin-top:16px;">关闭</button>
@@ -164,36 +157,46 @@ function parseDateVal(v){
   return null;
 }
 
-// 序列化与反序列化（彻底解决时区导致的日期偏移问题）
 function serializeRows(rows) {
     return rows.map(r => {
         const o = {...r};
-        DATE_FIELDS.forEach(k => {
-            if (o[k] instanceof Date) o[k] = fmtDate(o[k]);
-        });
+        DATE_FIELDS.forEach(k => { if (o[k] instanceof Date) o[k] = fmtDate(o[k]); });
         return o;
     });
 }
 function deserializeRows(rows) {
     return rows.map(r => {
         const o = {...r};
-        DATE_FIELDS.forEach(k => {
-            o[k] = parseDateVal(o[k]);
-        });
+        DATE_FIELDS.forEach(k => { o[k] = parseDateVal(o[k]); });
         return o;
     });
 }
 
+// ================= 日期范围自适应 =================
+function updateDateRange() {
+    // 如果没选船，就按全局算；如果选了船，就按当前船算
+    const targetRows = state.shipNo ? state.rows.filter(r => r.shipNo === state.shipNo) : state.rows;
+    const allD = [];
+    targetRows.forEach(r => PHASES.forEach(p => {
+        if(r[p.start] instanceof Date) allD.push(r[p.start]);
+        if(r[p.end] instanceof Date) allD.push(r[p.end]);
+    }));
+    
+    if (allD.length) {
+        const min = Math.min(...allD.map(d => d.getTime()));
+        const max = Math.max(...allD.map(d => d.getTime()));
+        // 前后各留一点余量，让日期卡在月初和月末，看起来更舒服
+        state.dateStart = new Date(new Date(min).getFullYear(), new Date(min).getMonth(), 1);
+        state.dateEnd = new Date(new Date(max).getFullYear(), new Date(max).getMonth() + 1, 0);
+    } else {
+        state.dateStart = new Date(2027, 7, 1);
+        state.dateEnd = new Date(2028, 3, 30);
+    }
+}
+
 // ================= 弹窗控制 =================
-function openModal(id) {
-    closeAllModals();
-    document.getElementById('overlay').style.display = 'block';
-    document.getElementById(id).style.display = 'block';
-}
-function closeAllModals() {
-    document.getElementById('overlay').style.display = 'none';
-    document.querySelectorAll('.custom-modal').forEach(el => el.style.display = 'none');
-}
+function openModal(id) { closeAllModals(); document.getElementById('overlay').style.display = 'block'; document.getElementById(id).style.display = 'block'; }
+function closeAllModals() { document.getElementById('overlay').style.display = 'none'; document.querySelectorAll('.custom-modal').forEach(el => el.style.display = 'none'); }
 
 function openConfigModal() {
     document.getElementById('config-url').value = SUPABASE_URL;
@@ -231,10 +234,8 @@ async function doLogin() {
     const email = document.getElementById('auth-email').value;
     const password = document.getElementById('auth-password').value;
     if(!email || !password) return alert('请输入邮箱和密码');
-    
     const { data, error } = await sbClient.auth.signInWithPassword({ email, password });
     if (error) return alert('登录失败: ' + error.message);
-    
     closeAllModals();
     await checkUserApproval(data.user);
 }
@@ -244,10 +245,8 @@ async function doRegister() {
     const email = document.getElementById('auth-email').value;
     const password = document.getElementById('auth-password').value;
     if(!email || !password) return alert('请输入邮箱和密码');
-    
     const { data, error } = await sbClient.auth.signUp({ email, password });
     if (error) return alert('注册失败: ' + error.message);
-    
     if(data.user && data.session) {
         closeAllModals();
         await checkUserApproval(data.user);
@@ -260,7 +259,6 @@ async function doRegister() {
 window.onload = async () => {
     SUPABASE_URL = localStorage.getItem('sb_url') || SUPABASE_URL;
     SUPABASE_KEY = localStorage.getItem('sb_key') || SUPABASE_KEY;
-    
     await initSupabase();
     if(loadFromLocal()){
         pushHistory(); 
@@ -273,7 +271,6 @@ async function initSupabase(){
         sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         document.getElementById('btn-save-cloud').style.display = 'inline-block';
         document.getElementById('btn-load-cloud').style.display = 'inline-block';
-        
         const { data: { session } } = await sbClient.auth.getSession();
         if (session?.user) {
             await checkUserApproval(session.user);
@@ -291,20 +288,10 @@ async function initSupabase(){
 async function checkUserApproval(user) {
     currentUser = user;
     isApproved = false;
-    
     try {
-        const { data, error } = await sbClient
-            .from('approved_users')
-            .select('email')
-            .eq('email', user.email);
-            
-        if (!error && data && data.length > 0) {
-            isApproved = true;
-        }
-    } catch(e) {
-        console.error('查白名单失败', e);
-    }
-    
+        const { data, error } = await sbClient.from('approved_users').select('email').eq('email', user.email);
+        if (!error && data && data.length > 0) isApproved = true;
+    } catch(e) { console.error('查白名单失败', e); }
     updateAuthUI(user);
 }
 
@@ -359,30 +346,21 @@ function restoreSnapshot(str){
 
 // ================= 数据处理 =================
 function importExcelData(newRows){
-    const currentShip = state.shipNo; // 记住当前的船号
+    const currentShip = state.shipNo; 
     const newShips = new Set(newRows.map(r => r.shipNo));
     const keptRows = state.rows.filter(r => !newShips.has(r.shipNo));
     state.rows = [...keptRows, ...newRows];
     
     state.ships=[...new Set(state.rows.map(r=>r.shipNo))].sort();
     
-    // 恢复之前的船号，如果之前的没了，选最新的
     if (state.ships.includes(currentShip)) {
         state.shipNo = currentShip;
     } else {
         state.shipNo = newRows[0].shipNo; 
     }
 
-    const allD=[];
-    state.rows.forEach(r=>PHASES.forEach(p=>{if(r[p.start]instanceof Date)allD.push(r[p.start]);if(r[p.end]instanceof Date)allD.push(r[p.end]);}));
-    if(allD.length){
-      const min=Math.min(...allD.map(d=>d.getTime()));
-      const max=Math.max(...allD.map(d=>d.getTime()));
-      state.dateStart=new Date(new Date(min).getFullYear(),new Date(min).getMonth(),1);
-      state.dateEnd=new Date(new Date(max).getFullYear(),new Date(max).getMonth()+1,0);
-    }else{
-      state.dateStart=new Date(2027,7,1);state.dateEnd=new Date(2028,3,30);
-    }
+    updateDateRange(); // 重新计算时间跨度
+
     updateShipSelect();
     saveToLocal();
     pushHistory();
@@ -404,6 +382,9 @@ async function importExcel(file){
       const r=arr[i];if(!r)continue;
       const seg=r[col['分段号']];
       if(seg==null||String(seg).trim()==='')continue;
+      
+      const layEndVal = parseDateVal(r[col['分段下胎']]);
+      
       rows.push({
         id:uid(),excelRow:i+1,
         shipNo:String(r[col['船号']]||'').trim(),
@@ -412,9 +393,13 @@ async function importExcel(file){
         preNo:String(r[col['预组号']]||'').trim(),
         cuttingStart:parseDateVal(r[col['切割开工']]),cuttingEnd:parseDateVal(r[col['切割完工']]),
         partStart:parseDateVal(r[col['部件开工']]),partEnd:parseDateVal(r[col['部件完工']]),
-        layStart:parseDateVal(r[col['分段上胎']]),layEnd:parseDateVal(r[col['分段下胎']]),
+        layStart:parseDateVal(r[col['分段上胎']]),layEnd:layEndVal,
         structEnd:parseDateVal(r[col['结构完工']]),
-        preInstallStart:parseDateVal(r[col['预装开工']]),preInstallEnd:parseDateVal(r[col['预装完工']]),
+        
+        // 【核心修改】忽略预装开工列，强制取 分段下胎 + 2天
+        preInstallStart: (layEndVal ? addDays(layEndVal, 2) : null),
+        preInstallEnd:parseDateVal(r[col['预装完工']]),
+        
         preGroupStart:parseDateVal(r[col['预组开工']]),preGroupEnd:parseDateVal(r[col['预组完工']]),
         coatStart:parseDateVal(r[col['涂装开工']]),coatEnd:parseDateVal(r[col['涂装完工']]),
         totalStart:parseDateVal(r[col['总组开工']]),totalEnd:parseDateVal(r[col['总组完工']]),
@@ -1042,14 +1027,12 @@ async function saveToCloud() {
     if(!state.rows.length) { alert('本地没有数据'); return; }
     setStatus('正在保存到云端...');
     try {
-        // 关键修改：序列化日期，避免时区偏移
         const dataToSave = serializeRows(state.rows);
         const { error } = await sbClient
             .from('schedules')
             .upsert({ id: 'default', data: dataToSave, updated_at: new Date() });
         if (error) throw error;
         setStatus('云端保存成功');
-        // alert('云端保存成功！'); // 按新要求注释掉提示
     } catch(e) {
         console.error(e);
         setStatus('云端保存失败：' + e.message);
@@ -1069,10 +1052,7 @@ async function loadFromCloud() {
             .single();
         if (error) throw error;
         if (data && data.data) {
-            // 关键修改：反序列化
             const cloudRows = deserializeRows(data.data);
-            
-            // 保持当前查看的船号，如果当前船号没了，就选最新的第一个
             const currentShip = state.shipNo;
             state.rows = cloudRows;
             state.ships = [...new Set(state.rows.map(r=>r.shipNo))].sort();
@@ -1083,22 +1063,13 @@ async function loadFromCloud() {
                 state.shipNo = state.ships[0];
             }
             
-            // 重新计算日期范围并渲染
-            const allD=[];
-            state.rows.forEach(r=>PHASES.forEach(p=>{if(r[p.start]instanceof Date)allD.push(r[p.start]);if(r[p.end]instanceof Date)allD.push(r[p.end]);}));
-            if(allD.length){
-              const min=Math.min(...allD.map(d=>d.getTime()));
-              const max=Math.max(...allD.map(d=>d.getTime()));
-              state.dateStart=new Date(new Date(min).getFullYear(),new Date(min).getMonth(),1);
-              state.dateEnd=new Date(new Date(max).getFullYear(),new Date(max).getMonth()+1,0);
-            }
+            updateDateRange(); // 重新自适应时间跨度
+
             updateShipSelect();
             saveToLocal();
             pushHistory();
             render();
-            
             setStatus('云端拉取成功');
-            // alert('云端拉取成功！'); // 按新要求注释掉提示
         } else {
             setStatus('云端无数据');
         }
@@ -1134,7 +1105,6 @@ document.addEventListener('mouseout',e=>{
 document.addEventListener('click',e=>{
   const el=e.target.closest&&e.target.closest('.bar, .arrow-mark');
   if(!el || isBoxSelecting)return;
-  
   if (state.drag && state.drag.moved) return;
   
   const bar=(state.bars||[]).find(b=>b.id===el.getAttribute('data-bar-id'));
@@ -1161,9 +1131,7 @@ document.getElementById('right-panel').addEventListener('scroll',function(){
 });
 
 function saveToLocal(){ 
-    try{
-        localStorage.setItem('ship-schedule-v1', JSON.stringify(serializeRows(state.rows)));
-    }catch(err){}
+    try{ localStorage.setItem('ship-schedule-v1', JSON.stringify(serializeRows(state.rows))); }catch(err){}
 }
 function loadFromLocal(){
   try{
@@ -1174,14 +1142,9 @@ function loadFromLocal(){
     state.rows=deserializeRows(arr);
     state.ships=[...new Set(state.rows.map(r=>r.shipNo))].sort();
     state.shipNo=state.ships[0];
-    const allD=[];
-    state.rows.forEach(r=>PHASES.forEach(p=>{if(r[p.start]instanceof Date)allD.push(r[p.start]);if(r[p.end]instanceof Date)allD.push(r[p.end]);}));
-    if(allD.length){
-      const min=Math.min(...allD.map(d=>d.getTime()));
-      const max=Math.max(...allD.map(d=>d.getTime()));
-      state.dateStart=new Date(new Date(min).getFullYear(),new Date(min).getMonth(),1);
-      state.dateEnd=new Date(new Date(max).getFullYear(),new Date(max).getMonth()+1,0);
-    }
+    
+    updateDateRange(); // 自适应
+
     updateShipSelect();
     return true;
   }catch(err){return false;}
@@ -1189,7 +1152,6 @@ function loadFromLocal(){
 
 function exportExcel(){
   if(!state.rows.length){alert('没有数据');return;}
-  
   try {
     const header=['船号','分段号','总组号','预组号','切割周期','切割开工','切割完工','部件周期','部件开工','部件完工','在胎周期','分段上胎','分段下胎','结构完工','预装开工','预装完工','预组周期','预组开工','预组完工','涂装周期','涂装开工','涂装完工','总组周期','总组开工','总组完工','合拢开工','船台/坞周期','下水/出坞'];
     const data=[header];
@@ -1209,22 +1171,17 @@ function exportExcel(){
     const ws=XLSX.utils.aoa_to_sheet(data);
     const wb=XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb,ws,'日程');
-    
-    // ===== 关键修复：生成二进制 array，然后手动转为 Blob =====
     const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
     const blob = new Blob([wbout], { type: 'application/octet-stream' });
-    
     const url=URL.createObjectURL(blob);
     const a=document.createElement('a');
     a.style.display = 'none';
     a.href=url;
     const today=new Date();
     a.download=`${state.shipNo}-中日程-${today.getFullYear()}${pad2(today.getMonth()+1)}${pad2(today.getDate())}.xlsx`;
-    
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    
     setTimeout(()=>{ URL.revokeObjectURL(url); }, 5000);
     setStatus('已导出 Excel');
   } catch (error) {
@@ -1232,67 +1189,44 @@ function exportExcel(){
     alert("导出失败：" + error.message);
   }
 }
-// 删除当前船的数据
+
 function deleteCurrentShip() {
-    if (isReadOnlyMode()) {
-        alert('您没有编辑权限，无法删除数据！');
-        return;
-    }
-    if (!state.shipNo || state.shipRows.length === 0) {
-        alert('当前没有可删除的船只数据！');
-        return;
-    }
+    if (isReadOnlyMode()) { alert('您没有编辑权限，无法删除数据！'); return; }
+    if (!state.shipNo || state.shipRows.length === 0) { alert('当前没有可删除的船只数据！'); return; }
     
     const shipToDelete = state.shipNo;
-    if (!confirm(`确定要删除【${shipToDelete}】的所有数据吗？\n\n注意：删除后点击本地局部刷新，必须再点击顶部【保存】按钮，才会同步删除云端数据。`)) {
-        return;
-    }
+    if (!confirm(`确定要删除【${shipToDelete}】的所有数据吗？\n\n注意：删除后点击本地局部刷新，必须再点击顶部【保存】按钮，才会同步删除云端数据。`)) return;
 
-    // 1. 记录历史（用于撤销）
     pushHistory();
-
-    // 2. 从总数据中过滤掉该船的数据
     state.rows = state.rows.filter(r => r.shipNo !== shipToDelete);
-    
-    // 3. 更新船只列表
     state.ships = [...new Set(state.rows.map(r => r.shipNo))].sort();
     
-    // 4. 切换船号
     if (state.ships.length > 0) {
         state.shipNo = state.ships[0];
     } else {
         state.shipNo = null;
     }
 
-    // 5. 重新计算日期范围并刷新视图
-    const allD = [];
-    state.rows.forEach(r => PHASES.forEach(p => {
-        if(r[p.start] instanceof Date) allD.push(r[p.start]);
-        if(r[p.end] instanceof Date) allD.push(r[p.end]);
-    }));
-    
-    if (allD.length) {
-        const min = Math.min(...allD.map(d => d.getTime()));
-        const max = Math.max(...allD.map(d => d.getTime()));
-        state.dateStart = new Date(new Date(min).getFullYear(), new Date(min).getMonth(), 1);
-        state.dateEnd = new Date(new Date(max).getFullYear(), new Date(max).getMonth() + 1, 0);
-    } else {
-        state.dateStart = new Date();
-        state.dateEnd = new Date();
-    }
+    updateDateRange(); // 自适应
 
     updateShipSelect();
-    saveToLocal(); // 存本地
-    render();      // 刷新界面
+    saveToLocal();
+    render();
     setStatus(`已删除船只 ${shipToDelete}，请记得点击【保存】同步云端`);
 }
 
 document.getElementById('file-input').addEventListener('change',async e=>{
   const f=e.target.files[0];if(f)await importExcel(f);
 });
+
+// 核心修改：切换船号时，自动更新日期跨度
 document.getElementById('ship-select').addEventListener('change',e=>{
-  state.shipNo=e.target.value;state.selected.clear();render();
+  state.shipNo=e.target.value;
+  state.selected.clear();
+  updateDateRange(); // 自适应时间
+  render();
 });
+
 document.getElementById('zoom').addEventListener('input',e=>{
   state.dayWidth=parseInt(e.target.value);render();
 });
@@ -1302,9 +1236,6 @@ document.getElementById('date-start').addEventListener('change',e=>{
 document.getElementById('date-end').addEventListener('change',e=>{
   state.dateEnd=parseDateVal(e.target.value);render();
 });
-// 移除多余的绑定，HTML里已经有onclick了，防止重复触发导致下载失败
-// document.getElementById('btn-export').addEventListener('click',exportExcel);
-
 </script>
 </body>
 </html>
